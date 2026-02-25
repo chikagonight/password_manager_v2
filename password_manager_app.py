@@ -30,7 +30,8 @@ class PasswordManagerApp:
     def save_record(self, record_name, service_name, login, password, repeat_password, url_link_service, note):
         records_file = RECORDS_FILE
         if password == repeat_password:
-            record = self.records_file_tools.get_record_object(record_name, service_name, login, password, url_link_service, note)
+            record = self.records_file_tools.get_record_object(record_name, service_name, login, password,
+                                                               url_link_service, note)
             if self.file_tools.check_file_exist(records_file):
                 if self.file_tools.check_file_empty(records_file):
                     self.records_file_tools.create_records_file(record, records_file)
@@ -77,6 +78,7 @@ class PasswordManagerApp:
                 note = row["note"])
             self.records_file_tools.append_new_record(record, RECORDS_FILE)
             self.create_records_cards()
+
 
 if __name__ == '__main__':
     password_manager_app = PasswordManagerApp()

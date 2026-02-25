@@ -1,6 +1,7 @@
 from constants import SETTINGS_FILE, DEFAULT_SETTINGS
 from utils.file_tools import FileTools
 
+
 class SettingsTools:
     def __init__(self):
         self.file_tools = FileTools()

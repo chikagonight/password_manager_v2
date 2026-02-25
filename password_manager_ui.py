@@ -1,6 +1,7 @@
 import customtkinter as ctk
 from constants import *
 
+
 class Ui(ctk.CTk):
     def __init__(self, password_manager_app):
         super().__init__()
@@ -20,7 +21,6 @@ class Ui(ctk.CTk):
         self.create_input_tab()
         self.create_settings_tab()
         self.create_records_cards()
-
 
     # Функция создания области табов
     def create_input_tab(self):
@@ -119,16 +119,17 @@ class Ui(ctk.CTk):
     def create_record_card(self, record, row_count):
         # Создаю карточку записи пароля
         self.frame_card_record = ctk.CTkFrame(self.records_field, border_width = 2)
-        self.frame_card_record.grid(row = row_count , column = 0, padx = 1, pady = 1, sticky = "we")
+        self.frame_card_record.grid(row = row_count, column = 0, padx = 1, pady = 1, sticky = "we")
         self.frame_card_record.grid_columnconfigure(0, weight = 1)
         self.frame_card_record.grid_columnconfigure(1, weight = 0)
         self.card_record_title = ctk.CTkLabel(self.frame_card_record, text = f"{record["record_name"]}")
         self.card_record_title.grid(row = 0, column = 0, padx = 10, pady = 5, sticky = "w")
         self.card_record_button = ctk.CTkButton(self.frame_card_record,
                                                 command = lambda record = record:
-                                                self.password_manager_app.open_window_record(parent = self, record = record),
+                                                self.password_manager_app.open_window_record(parent = self,
+                                                                                             record = record),
                                                 text = "Открыть")
-        self.card_record_button.grid(row=1, column=1, padx=5, pady=5, sticky="wens")
+        self.card_record_button.grid(row = 1, column = 1, padx = 5, pady = 5, sticky = "wens")
         return self.frame_card_record
 
     # Отображаю записи из records_json в фрейме - frame_cards_record
@@ -146,20 +147,26 @@ class Ui(ctk.CTk):
             child.destroy()
 
         ##### ТАБ НАСТРОЕК #####
+
     def create_settings_tab(self):
 
         settings_tabview = self.tabviews.add("Настройки")
         settings_tabview.grid_rowconfigure(0, weight = 0)
-        settings_tabview.grid_columnconfigure(0, weight = 1)
+        settings_tabview.grid_columnconfigure(0, weight = 3)
         settings_tabview.grid_columnconfigure(1, weight = 1)
+        settings_tabview.grid_columnconfigure(2, weight = 3)
 
         # Настройка смены темы
-        self.text_change_theme_switch = "Темная тема"
+
+        self.label_change_theme_switch = ctk.CTkLabel(settings_tabview, text = "Смена цветового оформления")
+        self.label_change_theme_switch.grid(row = 0, column = 0, padx = 5, pady = 5, sticky = "wns")
+
+        self.text_change_theme_switch = ""
         # Создаю селектор
         self.change_theme_switch = ctk.CTkSwitch(settings_tabview, text = self.text_change_theme_switch,
                                                  command = self.change_theme, onvalue = "Dark",
                                                  offvalue = "Light", state = "normal")
-        self.change_theme_switch.grid(row = 0, column = 0, padx = 5, pady = 5, sticky = "wen")
+        self.change_theme_switch.grid(row = 0, column = 1, padx = 5, pady = 5, sticky = "wens")
         # Определяю положение кнопки смены темы исходя из значения в файле настроек
         if self.file_settings["theme"] == "Dark":
             self.change_theme_switch.select()
@@ -173,12 +180,11 @@ class Ui(ctk.CTk):
         self.path_to_csv_import_field.grid(row = 2, column = 0, padx = 5, pady = 5, sticky = "wens")
 
         self.import_records_button = ctk.CTkButton(settings_tabview, text = "Импорт",
-                                                   command = self.get_string_from_import_field)
-        self.import_records_button.grid(row = 2, column = 1, padx = 5, pady = 5, sticky = "wens")
+                                                   command = self.get_string_from_import_field, width = 50)
+        self.import_records_button.grid(row = 2, column = 1, padx = 5, pady = 5, sticky = "wns")
 
     def get_string_from_import_field(self):
         self.password_manager_app.import_records_from_csv(path_to_file = self.path_to_csv_import_field.get())
-
 
     ##### ФУНКЦИИ #####
 
@@ -193,7 +199,8 @@ class Ui(ctk.CTk):
             self.password_input.insert("end", output_password)
             self.repeat_password_input.insert("end", output_password)
             self.repeat_password_input.configure(show = "*")
-            self.password_manager_app.log_event(f"Сгенерирован пароль длиной {self.length_password.get()} символов: {self.password_input.get()}")
+            self.password_manager_app.log_event(
+                f"Сгенерирован пароль длиной {self.length_password.get()} символов: {self.password_input.get()}")
         else:
             self.password_manager_app.log_event(f"Не корректная длина пароля - {password_length}")
 
@@ -234,5 +241,5 @@ class Ui(ctk.CTk):
     # Еще и сохраняет настройку в json
     def change_theme(self):
         ctk.set_appearance_mode(self.change_theme_switch.get())
-        self.password_manager_app.save_settings("theme", self.file_settings, self.change_theme_switch.get(), SETTINGS_FILE)
-
+        self.password_manager_app.save_settings("theme", self.file_settings, self.change_theme_switch.get(),
+                                                SETTINGS_FILE)
