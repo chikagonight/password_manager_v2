@@ -1,0 +1,7 @@
+.venv/
+/.idea/
+trash/
+__pycache__/
+utils/__pycache__/
+records.json
+settings.json
