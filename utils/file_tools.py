@@ -31,5 +31,3 @@ class FileTools:
     def parse_csv_file(self, path_to_file):
         with open(path_to_file, "r", encoding = "utf-8") as f:
             return list(csv.DictReader(f))
-        #     pass
-        # return path_to_file

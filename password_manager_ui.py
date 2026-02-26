@@ -6,7 +6,7 @@ class Ui(ctk.CTk):
     def __init__(self, password_manager_app):
         super().__init__()
         self.geometry("900x520")
-        self.title("Password manager v1.0")
+        self.title("Password manager v2.1")
         ctk.FontManager.load_font("Segoe UI Emoji")
         self.password_manager_app = password_manager_app
         self.password_manager_app.create_records_cards = self.create_records_cards
@@ -137,10 +137,8 @@ class Ui(ctk.CTk):
         self.refresh_records_field()
         row_count = 1
         for record in self.password_manager_app.get_records(RECORDS_FILE):
-            print(f"{record}")
             row_count += 1
             self.frame_card_record = self.create_record_card(record, row_count)
-        print("\n")
 
     def refresh_records_field(self):
         for child in self.records_field.winfo_children():
