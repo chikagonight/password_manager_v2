@@ -117,11 +117,6 @@ class Ui(ctk.CTk):
         self.records_field.grid_rowconfigure(0, weight = 0)
         self.records_field.grid_columnconfigure(0, weight = 1)
 
-        # Возможно стоит реализовать поиск таким образом:
-        # Брать строку из поиска и искать по файлу в котором
-        # будут храниться пароли и потом отображать в фрейме при помощи цикла
-        # А не искать в уже отрисованых виджетах
-
         # Кнопка сохранения
         self.save_new_record_button = ctk.CTkButton(new_record_tabview, text = "Сохранить запись",
                                                     command = self.save_record)
@@ -194,8 +189,6 @@ class Ui(ctk.CTk):
 
     ##### ФУНКЦИИ #####
 
-    # функция которая вызывают хелпер для генерации паролей
-    # передает в нею длину их поля comboBox
     def on_generate_password(self):
         password_length = int(self.length_password.get())
         output_password = self.password_manager_app.password_generate(password_length)

@@ -10,7 +10,7 @@ class RecordWindow(ctk.CTkToplevel):
 
         self.title(self.record["record_name"])
         self.geometry("500x300")
-        self.minsize(500, 300)
+        self.minsize(600, 300)
         self.grid_columnconfigure(0, weight = 1)
         self.grid_columnconfigure(1, weight = 1)
         self.grid_columnconfigure(2, weight = 1)
@@ -58,7 +58,7 @@ class RecordWindow(ctk.CTkToplevel):
 
         self.password_service = ctk.CTkEntry(self.record_window_frame)
         self.password_service.insert(0, string = self.record["password"])
-        self.password_service.configure(state = "readonly")
+        self.password_service.configure(state = "readonly", show = "*")
         self.password_service.grid(row = 3, column = 0, pady = 5, padx = 5, sticky = "wens")
 
         self.note_service = ctk.CTkTextbox(self.record_window_frame, width = 50, height = 25, border_width = 2)
@@ -75,8 +75,9 @@ class RecordWindow(ctk.CTkToplevel):
         self.copy_login_button = ctk.CTkButton(self.record_window_frame, text = "Копировать логин")
         self.copy_login_button.grid(row = 2, column = 1, columnspan = 2, pady = 5, padx = (0,5), sticky = "we")
 
-        self.copy_password_button = ctk.CTkButton(self.record_window_frame, text = "Показать", width = 50)
-        self.copy_password_button.grid(row = 3, column = 1, pady = 5, padx = (0,5), sticky = "wens")
+        self.show_password_button = ctk.CTkButton(self.record_window_frame, text = "Показать", width = 80, command = lambda:
+                                                  self.password_manager_app.show_password_on_click(self.password_service, self.show_password_button))
+        self.show_password_button.grid(row = 3, column = 1, pady = 5, padx = (0,5), sticky = "wens")
 
         self.copy_password_button = ctk.CTkButton(self.record_window_frame, text = "Копировать", width = 50)
         self.copy_password_button.grid(row = 3, column = 2, pady = 5, padx = (0,5), sticky = "wens")
