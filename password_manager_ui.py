@@ -135,11 +135,8 @@ class Ui(ctk.CTk):
         self.frame_card_record.grid_columnconfigure(1, weight = 0)
         self.card_record_title = ctk.CTkLabel(self.frame_card_record, text = f"{record["record_name"]}")
         self.card_record_title.grid(row = 0, column = 0, padx = 10, pady = 5, sticky = "w")
-        self.card_record_button = ctk.CTkButton(self.frame_card_record,
-                                                command = lambda record = record:
-                                                self.password_manager_app.open_window_record(parent = self,
-                                                                                             record = record),
-                                                text = "Открыть")
+        self.card_record_button = ctk.CTkButton(self.frame_card_record, text = "Открыть",
+                                                command = lambda:self.password_manager_app.open_window_record(self, record))
         self.card_record_button.grid(row = 1, column = 1, padx = 5, pady = 5, sticky = "wens")
         return self.frame_card_record
 
