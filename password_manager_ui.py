@@ -42,8 +42,8 @@ class Ui(ctk.CTk):
         self.name_record_field.grid(row = 0, column = 0, columnspan = 3, padx = 5, pady = 5, sticky = "wens")
 
         # Имя севиса
-        self.name_sevice_field = ctk.CTkEntry(new_record_tabview, placeholder_text = "Имя сервиса", state = "normal")
-        self.name_sevice_field.grid(row = 1, column = 0, columnspan = 1, padx = (5, 5), pady = 5, sticky = "wens")
+        self.name_service_field = ctk.CTkEntry(new_record_tabview, placeholder_text = "Имя сервиса", state = "normal")
+        self.name_service_field.grid(row = 1, column = 0, columnspan = 1, padx = (5, 5), pady = 5, sticky = "wens")
 
         # Поле ввода ссылки
         self.url_input_field = ctk.CTkEntry(new_record_tabview, placeholder_text = "Ссылка url", state = "normal")
@@ -112,9 +112,9 @@ class Ui(ctk.CTk):
         # А не искать в уже отрисованых виджетах
 
         # Кнопка сохранения
-        self.save_new_record_bitton = ctk.CTkButton(new_record_tabview, text = "Сохранить запись",
+        self.save_new_record_button = ctk.CTkButton(new_record_tabview, text = "Сохранить запись",
                                                     command = self.save_record)
-        self.save_new_record_bitton.grid(row = 7, column = 0, columnspan = 3, padx = 5, pady = 5, sticky = "wens")
+        self.save_new_record_button.grid(row = 7, column = 0, columnspan = 3, padx = 5, pady = 5, sticky = "wens")
 
     def create_record_card(self, record, row_count):
         # Создаю карточку записи пароля
@@ -215,7 +215,7 @@ class Ui(ctk.CTk):
     def save_record(self):
         self.password_manager_app.save_record(
             self.name_record_field.get(),
-            self.name_sevice_field.get(),
+            self.name_service_field.get(),
             self.login_input.get(),
             self.password_input.get(),
             self.repeat_password_input.get(),
@@ -228,7 +228,7 @@ class Ui(ctk.CTk):
 
     def clear_input_fields(self):
         self.name_record_field.delete(0, "end")
-        self.name_sevice_field.delete(0, "end")
+        self.name_service_field.delete(0, "end")
         self.login_input.delete(0, "end")
         self.password_input.delete(0, "end")
         self.repeat_password_input.delete(0, "end")

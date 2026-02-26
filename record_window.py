@@ -82,8 +82,8 @@ class RecordWindow(ctk.CTkToplevel):
         self.copy_password_button.grid(row = 3, column = 2, pady = 5, padx = (0,5), sticky = "wens")
 
         self.delete_record_button = ctk.CTkButton(self.record_window_frame, text = "Удалить запись",
-                                                  command = lambda id = self.record["ID"]:
-                                                  self.password_manager_app.delete_record(id))
+                                                  command = lambda record_id = self.record["ID"]:
+                                                  self.password_manager_app.delete_record(record_id))
         self.delete_record_button.grid(row = 4, column = 1, columnspan = 2, pady = 5, padx = (0,5), sticky = "wes")
 
     def center_window(self, parent):

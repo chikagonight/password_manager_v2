@@ -10,9 +10,9 @@ class SaverRecordsInFile:
         # self.id_records_generator()
 
     def get_record_object(self, record_name, service_name, login, password, url_link_service, note):
-        id = self.id_records_generator(self.load_ids())
+        record_id = self.id_records_generator(self.load_ids())
         record = {
-            "ID"              : id,
+            "ID"              : record_id,
             "record_name"     : record_name,
             "service_name"    : service_name,
             "login"           : login,
@@ -60,10 +60,10 @@ class SaverRecordsInFile:
             count += 1
         return count
 
-    def delete_record(self, id):
+    def delete_record(self, record_id):
         record_file = self.file_tools.parse_json_file(self.records_file)
         for record in record_file:
-            if record["ID"] == id:
-                print(record_file.index(record), id)
+            if record["ID"] == record_id:
+                print(record_file.index(record), record_id)
                 record_file.pop(record_file.index(record))
                 return record_file

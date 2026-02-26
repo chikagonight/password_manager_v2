@@ -40,8 +40,8 @@ class PasswordManagerApp:
             else:
                 self.records_file_tools.create_records_file(record, records_file)
 
-    def delete_record(self, id):
-        record_file = self.records_file_tools.delete_record(id)
+    def delete_record(self, record_id):
+        record_file = self.records_file_tools.delete_record(record_id)
         self.file_tools.write_to_json_file(record_file, RECORDS_FILE)
         self.create_records_cards()
         self.record_window.destroy()
