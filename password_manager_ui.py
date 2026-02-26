@@ -61,8 +61,19 @@ class Ui(ctk.CTk):
 
         # Кнопка показать пароль
         self.show_password_button = ctk.CTkButton(new_record_tabview, text = "Показать", width = 30,
-                                                  command = self.show_password_input)
+                                                  command = lambda:self.password_manager_app.show_password_on_click(
+                                                      self.password_input, self.show_password_button))
         self.show_password_button.grid(row = 3, column = 1, padx = (0, 2.5), pady = 5, sticky = "wen")
+
+    # Функция которая показывает/скрывает поле ввода пароля
+    # def show_password_input(self):
+    #     self.password_manager_app.show_password_on_click(self.password_input, self.show_password_button)
+    #     # if self.password_input.cget("show") == "*":
+    #     #     self.password_input.configure(show = "")
+    #     #     self.show_password_button.configure(text = "Скрыть")
+    #     # else:
+    #     #     self.password_input.configure(show = "*")
+    #     #     self.show_password_button.configure(text = "Показать")
 
         # Кнопка генерировать пароль
         self.gen_password_button = ctk.CTkButton(new_record_tabview, text = "Генерировать",
@@ -201,15 +212,6 @@ class Ui(ctk.CTk):
                 f"Сгенерирован пароль длиной {self.length_password.get()} символов: {self.password_input.get()}")
         else:
             self.password_manager_app.log_event(f"Не корректная длина пароля - {password_length}")
-
-    # Функция которая показывает/скрывает поле ввода пароля
-    def show_password_input(self):
-        if self.password_input.cget("show") == "*":
-            self.password_input.configure(show = "")
-            self.show_password_button.configure(text = "Скрыть")
-        else:
-            self.password_input.configure(show = "*")
-            self.show_password_button.configure(text = "Показать")
 
     # Сохранение пароля в records.json
     def save_record(self):

@@ -52,6 +52,15 @@ class PasswordManagerApp:
     def password_generate(self, length_password) -> str:
         return self.password_generator.generate(length_password)
 
+    def show_password_on_click(self, field, button):
+        if field.cget("show") == "*":
+            field.configure(show = "")
+            button.configure(text = "Скрыть")
+        else:
+            field.configure(show = "*")
+            button.configure(text = "Показать")
+
+
     def load_settings(self):
         return self.settings_tools.load()
 
