@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import csv
 import json
 import logging
+import re
+from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -15,6 +16,7 @@ from constants import (
     VAULT_FILE,
 )
 from models import PasswordRecord, utc_now
+from utils.browser_csv import BrowserCsvError, read_browser_csv
 from utils.password_tools import PasswordGenerator
 from utils.settings_tools import SettingsTools
 from utils.vault_store import VaultError, VaultStore
@@ -208,31 +210,37 @@ class PasswordManagerApp:
         LOGGER.info("Сгенерирован пароль длиной %s символов", len(generated))
         return generated
 
-    def import_records_from_csv(self, path_to_file: Path | str) -> int:
+    def import_records_from_csv(
+        self,
+        path_to_file: Path | str,
+        progress_callback: Callable[[int, int, str], None] | None = None,
+    ) -> int:
         self._require_unlocked()
         path = Path(path_to_file)
         try:
-            with path.open("r", encoding="utf-8-sig", newline="") as source:
-                rows = list(csv.DictReader(source))
-        except OSError as exc:
-            raise ImportRecordsError(f"Не удалось открыть CSV: {exc}") from exc
-        if not rows:
-            raise ImportRecordsError("CSV не содержит записей")
+            csv_data = read_browser_csv(path, progress_callback)
+        except BrowserCsvError as exc:
+            raise ImportRecordsError(str(exc)) from exc
+
+        rows = csv_data.rows
+        total = len(rows)
+        if progress_callback:
+            progress_callback(0, total, f"Проверка: {csv_data.source_format}")
 
         imported: list[PasswordRecord] = []
         errors: list[str] = []
-        for number, row in enumerate(rows, start=2):
-            normalized = {str(key).strip().casefold(): (value or "") for key, value in row.items() if key}
-            name = self._first_value(normalized, "name", "record_name", "title")
-            service = self._first_value(normalized, "service", "service_name", "name")
-            login = self._first_value(normalized, "username", "login", "user")
-            password = self._first_value(normalized, "password", "pass")
-            url = self._first_value(normalized, "url", "website", "url_link_service")
-            note = self._first_value(normalized, "note", "notes", "comment")
+        progress_step = max(1, total // 100)
+        for number, row in enumerate(rows, start=1):
+            name = row["record_name"]
+            service = row["service_name"]
+            login = row["login"]
+            password = row["password"]
+            url = row["url_link_service"]
+            note = row["note"]
             try:
                 values = self._validate_record_fields(name, service, login, password, password, url)
             except ValidationError as exc:
-                errors.append(f"строка {number}: {exc}")
+                errors.append(f"строка {number + 1}: {exc}")
                 continue
             imported.append(
                 PasswordRecord.create(
@@ -244,11 +252,15 @@ class PasswordManagerApp:
                     note=note,
                 )
             )
+            if progress_callback and (number == total or number % progress_step == 0):
+                progress_callback(number, total, f"Проверка: {csv_data.source_format}")
         if errors:
             preview = "; ".join(errors[:5])
             suffix = f"; ещё ошибок: {len(errors) - 5}" if len(errors) > 5 else ""
             raise ImportRecordsError(f"Импорт отменён: {preview}{suffix}")
 
+        if progress_callback:
+            progress_callback(total, total, "Шифрование и сохранение")
         self._records = imported + self._records
         try:
             self.store.save(self._records)
@@ -314,7 +326,7 @@ class PasswordManagerApp:
         record_name = record_name.strip()
         service_name = service_name.strip()
         login = login.strip()
-        url_link_service = url_link_service.strip()
+        url_link_service = PasswordManagerApp._normalize_web_url(url_link_service)
         if not record_name:
             raise ValidationError("Укажите имя записи")
         if not service_name:
@@ -325,15 +337,38 @@ class PasswordManagerApp:
             raise ValidationError("Пароль не может быть пустым")
         if password != repeat_password:
             raise ValidationError("Пароли не совпадают")
-        if url_link_service:
-            parsed = urlparse(url_link_service)
-            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                raise ValidationError("URL должен начинаться с http:// или https://")
         return record_name, service_name, login, url_link_service
 
     @staticmethod
-    def _first_value(row: dict[str, str], *keys: str) -> str:
-        return next((row[key] for key in keys if row.get(key)), "")
+    def _normalize_web_url(value: str) -> str:
+        url = value.strip()
+        if not url:
+            return ""
+
+        lower_url = url.casefold()
+        has_supported_scheme = lower_url.startswith(("http://", "https://"))
+        host_with_port = re.match(r"^[^/\s:]+(?::\d+)(?:/|$)", url) is not None
+        scheme = re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", url)
+        if scheme and not has_supported_scheme and not host_with_port:
+            raise ValidationError("Допустимы только ссылки HTTP или HTTPS")
+
+        if url.startswith("//"):
+            url = f"https:{url}"
+        elif not has_supported_scheme:
+            url = f"https://{url}"
+
+        parsed = urlparse(url)
+        try:
+            parsed_port = parsed.port
+        except ValueError as exc:
+            raise ValidationError("В URL указан некорректный порт") from exc
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValidationError("Укажите корректный адрес сайта")
+        if any(character.isspace() for character in parsed.hostname):
+            raise ValidationError("Адрес сайта не должен содержать пробелы")
+        if parsed_port is not None and not 1 <= parsed_port <= 65_535:
+            raise ValidationError("В URL указан некорректный порт")
+        return url
 
     def _require_unlocked(self) -> None:
         if self.is_locked:

@@ -71,11 +71,25 @@ class PasswordManagerAppTests(unittest.TestCase):
             self.app.save_record("", "Service", "login", "one", "two")
         self.assertEqual([original.id], [item.id for item in self.app.get_records()])
 
-    def test_url_rejects_unsafe_and_incomplete_schemes(self):
+    def test_url_rejects_unsafe_schemes(self):
         self.create_vault()
-        for url in ("javascript:alert(1)", "ftp://example.test", "example.test"):
+        for url in ("javascript:alert(1)", "data:text/plain,bad", "file:///tmp/secret", "ftp://example.test"):
             with self.subTest(url=url), self.assertRaises(ValidationError):
                 self.app.save_record("Name", "Service", "login", "secret", "secret", url)
+
+    def test_url_without_scheme_is_normalized_to_https(self):
+        self.create_vault()
+
+        record = self.app.save_record(
+            "Name",
+            "Service",
+            "login",
+            "secret",
+            "secret",
+            "example.test/account",
+        )
+
+        self.assertEqual("https://example.test/account", record.url_link_service)
 
     def test_search_does_not_match_password_contents(self):
         self.create_vault()
@@ -93,6 +107,7 @@ class PasswordManagerAppTests(unittest.TestCase):
 
     def test_csv_import_is_transactional(self):
         self.create_vault()
+        progress_events: list[tuple[int, int, str]] = []
         valid_csv = self.directory / "valid.csv"
         self._write_csv(
             valid_csv,
@@ -101,7 +116,15 @@ class PasswordManagerAppTests(unittest.TestCase):
                 {"name": "Two", "username": "two", "password": "secret-2", "url": "https://two.test", "note": ""},
             ],
         )
-        self.assertEqual(2, self.app.import_records_from_csv(valid_csv))
+        self.assertEqual(
+            2,
+            self.app.import_records_from_csv(
+                valid_csv,
+                lambda current, total, phase: progress_events.append((current, total, phase)),
+            ),
+        )
+        self.assertTrue(any("Chrome / Edge / Brave / Opera" in event[2] for event in progress_events))
+        self.assertEqual("Шифрование и сохранение", progress_events[-1][2])
         before = [record.id for record in self.app.get_records()]
 
         invalid_csv = self.directory / "invalid.csv"
@@ -109,7 +132,7 @@ class PasswordManagerAppTests(unittest.TestCase):
             invalid_csv,
             [
                 {"name": "Three", "username": "three", "password": "secret-3", "url": "https://three.test", "note": ""},
-                {"name": "Broken", "username": "", "password": "secret-4", "url": "javascript:bad", "note": ""},
+                {"name": "Broken", "username": "", "password": "", "url": "javascript:bad", "note": ""},
             ],
         )
         with self.assertRaises(ImportRecordsError):

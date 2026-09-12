@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import queue
+import threading
 import webbrowser
 from contextlib import suppress
 from tkinter import filedialog, messagebox, simpledialog
@@ -20,8 +22,8 @@ class Ui(ctk.CTk):
         super().__init__()
 
         self.title(f"{APP_TITLE} 1.0")
-        self.geometry("1050x650")
-        self.minsize(900, 560)
+        self.geometry("620x820")
+        self.minsize(540, 700)
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
         self._lock_job: str | None = None
@@ -29,6 +31,10 @@ class Ui(ctk.CTk):
         self._clipboard_job: str | None = None
         self._status_job: str | None = None
         self._clipboard_value: str | None = None
+        self._import_running = False
+        self._import_poll_job: str | None = None
+        self._import_queue: queue.Queue[tuple] = queue.Queue()
+        self.import_dialog: ctk.CTkToplevel | None = None
         self.record_window: RecordWindow | None = None
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.show_lock_screen()
@@ -52,7 +58,7 @@ class Ui(ctk.CTk):
         is_existing = self.password_manager_app.vault_exists
         heading = "Разблокировать хранилище" if is_existing else "Создать безопасное хранилище"
         description = (
-            "Введите мастер-пароль. Он нигде не сохраняется."
+            "Введите мастер-пароль."
             if is_existing
             else f"Придумайте мастер-пароль не короче {MIN_MASTER_PASSWORD_LENGTH} символов.\n"
             "Восстановить забытый мастер-пароль невозможно."
@@ -185,51 +191,71 @@ class Ui(ctk.CTk):
         self.records_field.grid_columnconfigure(0, weight=1)
 
     def _create_record_form(self) -> None:
-        self.create_tab.grid_columnconfigure((0, 1), weight=1)
-        self.create_tab.grid_rowconfigure(5, weight=1)
+        self.create_tab.grid_columnconfigure(0, weight=1)
+        self.create_tab.grid_rowconfigure(2, weight=1)
 
-        self.name_record_field = ctk.CTkEntry(self.create_tab, placeholder_text="Имя записи *")
-        self.name_record_field.grid(row=0, column=0, columnspan=2, padx=8, pady=(12, 6), sticky="ew")
-        self.name_service_field = ctk.CTkEntry(self.create_tab, placeholder_text="Сервис *")
-        self.name_service_field.grid(row=1, column=0, padx=(8, 4), pady=6, sticky="ew")
-        self.url_input_field = ctk.CTkEntry(self.create_tab, placeholder_text="https://example.com")
-        self.url_input_field.grid(row=1, column=1, padx=(4, 8), pady=6, sticky="ew")
-        self.login_input = ctk.CTkEntry(self.create_tab, placeholder_text="Логин *")
-        self.login_input.grid(row=2, column=0, columnspan=2, padx=8, pady=6, sticky="ew")
-
-        password_frame = ctk.CTkFrame(self.create_tab, fg_color="transparent")
-        password_frame.grid(row=3, column=0, columnspan=2, padx=8, pady=6, sticky="ew")
-        password_frame.grid_columnconfigure((0, 1), weight=1)
-        self.password_input = ctk.CTkEntry(password_frame, placeholder_text="Пароль *", show="*")
-        self.password_input.grid(row=0, column=0, padx=(0, 4), sticky="ew")
-        self.repeat_password_input = ctk.CTkEntry(password_frame, placeholder_text="Повторите пароль *", show="*")
-        self.repeat_password_input.grid(row=0, column=1, padx=(4, 4), sticky="ew")
-        self.show_password_button = ctk.CTkButton(
-            password_frame, text="Показать", width=90, command=self.toggle_create_password
+        basic_frame = ctk.CTkFrame(self.create_tab)
+        basic_frame.grid(row=0, column=0, padx=8, pady=(10, 5), sticky="ew")
+        basic_frame.grid_columnconfigure(0, weight=1)
+        self.name_record_field = self._labeled_entry(basic_frame, 0, "Имя записи *")
+        self.name_service_field = self._labeled_entry(basic_frame, 2, "Сервис *")
+        self.url_input_field = self._labeled_entry(
+            basic_frame, 4, "Сайт", "example.com — https:// добавится автоматически"
         )
-        self.show_password_button.grid(row=0, column=2, padx=(4, 4))
+
+        password_frame = ctk.CTkFrame(self.create_tab)
+        password_frame.grid(row=1, column=0, padx=8, pady=5, sticky="ew")
+        password_frame.grid_columnconfigure(0, weight=1)
+        self.login_input = self._labeled_entry(password_frame, 0, "Логин *")
+        ctk.CTkLabel(password_frame, text="Пароль *").grid(row=2, column=0, padx=10, pady=(5, 2), sticky="w")
+        self.password_input = ctk.CTkEntry(password_frame, placeholder_text="Пароль", show="*")
+        self.password_input.grid(row=3, column=0, padx=10, pady=(0, 5), sticky="ew")
+        ctk.CTkLabel(password_frame, text="Повтор пароля *").grid(
+            row=4, column=0, padx=10, pady=(5, 2), sticky="w"
+        )
+        self.repeat_password_input = ctk.CTkEntry(password_frame, placeholder_text="Повторите пароль", show="*")
+        self.repeat_password_input.grid(row=5, column=0, padx=10, pady=(0, 5), sticky="ew")
+        generator_frame = ctk.CTkFrame(password_frame, fg_color="transparent")
+        generator_frame.grid(row=6, column=0, padx=10, pady=(5, 10), sticky="ew")
+        generator_frame.grid_columnconfigure(2, weight=1)
+        self.show_password_button = ctk.CTkButton(
+            generator_frame, text="Показать", width=90, command=self.toggle_create_password
+        )
+        self.show_password_button.grid(row=0, column=0, padx=(0, 5))
         self.length_password = ctk.CTkComboBox(
-            password_frame, values=[str(i) for i in range(12, 65)], width=75
+            generator_frame, values=[str(i) for i in range(12, 65)], width=75
         )
         self.length_password.set("20")
-        self.length_password.grid(row=0, column=3, padx=4)
-        ctk.CTkButton(password_frame, text="Сгенерировать", width=110, command=self.on_generate_password).grid(
-            row=0, column=4, padx=(4, 0)
+        self.length_password.grid(row=0, column=1, padx=5)
+        ctk.CTkButton(generator_frame, text="Сгенерировать", command=self.on_generate_password).grid(
+            row=0, column=2, padx=(5, 0), sticky="ew"
         )
 
-        ctk.CTkLabel(self.create_tab, text="Комментарий или заметка").grid(
-            row=4, column=0, columnspan=2, padx=10, pady=(8, 2), sticky="w"
+        note_frame = ctk.CTkFrame(self.create_tab)
+        note_frame.grid(row=2, column=0, padx=8, pady=5, sticky="nsew")
+        note_frame.grid_columnconfigure(0, weight=1)
+        note_frame.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(note_frame, text="Комментарий или заметка").grid(
+            row=0, column=0, padx=10, pady=(8, 2), sticky="w"
         )
-        self.note_input_field = ctk.CTkTextbox(self.create_tab, border_width=1)
-        self.note_input_field.grid(row=5, column=0, columnspan=2, padx=8, pady=(0, 8), sticky="nsew")
+        self.note_input_field = ctk.CTkTextbox(note_frame, border_width=1, height=90)
+        self.note_input_field.grid(row=1, column=0, padx=10, pady=(0, 10), sticky="nsew")
         ctk.CTkButton(self.create_tab, text="Сохранить запись", command=self.save_record, height=38).grid(
-            row=6, column=0, columnspan=2, padx=8, pady=(0, 10), sticky="ew"
+            row=3, column=0, padx=8, pady=(5, 10), sticky="ew"
         )
+
+    @staticmethod
+    def _labeled_entry(parent, row: int, label: str, placeholder: str = ""):
+        ctk.CTkLabel(parent, text=label).grid(row=row, column=0, padx=10, pady=(7, 2), sticky="w")
+        entry = ctk.CTkEntry(parent, placeholder_text=placeholder)
+        entry.grid(row=row + 1, column=0, padx=10, pady=(0, 5), sticky="ew")
+        return entry
 
     def _create_settings_tab(self) -> None:
         self.settings_tab.grid_columnconfigure(0, weight=1)
         panel = ctk.CTkFrame(self.settings_tab)
         panel.grid(row=0, column=0, padx=12, pady=12, sticky="new")
+        panel.grid_columnconfigure(0, weight=1)
         panel.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(panel, text="Оформление").grid(row=0, column=0, padx=12, pady=10, sticky="w")
@@ -251,26 +277,29 @@ class Ui(ctk.CTk):
         )
 
         ctk.CTkButton(panel, text="Импортировать CSV", command=self.import_csv).grid(
-            row=2, column=0, padx=12, pady=8, sticky="ew"
+            row=2, column=0, columnspan=2, padx=12, pady=6, sticky="ew"
         )
         ctk.CTkButton(panel, text="Сохранить зашифрованную копию", command=self.export_backup).grid(
-            row=2, column=1, padx=12, pady=8, sticky="ew"
+            row=3, column=0, columnspan=2, padx=12, pady=6, sticky="ew"
         )
         ctk.CTkButton(panel, text="Восстановить зашифрованную копию", command=self.restore_backup).grid(
-            row=3, column=0, padx=12, pady=8, sticky="ew"
+            row=4, column=0, columnspan=2, padx=12, pady=6, sticky="ew"
         )
         ctk.CTkButton(panel, text="Сменить мастер-пароль", command=self.change_master_password).grid(
-            row=3, column=1, padx=12, pady=8, sticky="ew"
+            row=5, column=0, columnspan=2, padx=12, pady=6, sticky="ew"
+        )
+        ctk.CTkButton(panel, text="Поддерживаемые CSV", command=self.show_csv_help).grid(
+            row=6, column=0, columnspan=2, padx=12, pady=6, sticky="ew"
         )
         ctk.CTkButton(panel, text="Заблокировать сейчас", command=self.lock_now).grid(
-            row=4, column=0, columnspan=2, padx=12, pady=8, sticky="ew"
+            row=7, column=0, columnspan=2, padx=12, pady=6, sticky="ew"
         )
         ctk.CTkLabel(
             panel,
             text=f"Данные: {self.password_manager_app.data_dir}",
-            wraplength=760,
+            wraplength=480,
             text_color="gray60",
-        ).grid(row=5, column=0, columnspan=2, padx=12, pady=(12, 10), sticky="w")
+        ).grid(row=8, column=0, columnspan=2, padx=12, pady=(12, 10), sticky="w")
 
     def refresh_records(self) -> None:
         if self.password_manager_app.is_locked or not hasattr(self, "records_field"):
@@ -404,16 +433,107 @@ class Ui(ctk.CTk):
         if not path:
             return
         if not messagebox.askyesno(
-            "Импорт CSV", "Все строки будут проверены до записи. Продолжить?", parent=self
+            "Импорт CSV",
+            "Файл будет полностью прочитан и проверен до изменения хранилища.\n\n"
+            "Если хотя бы одна строка некорректна, ни одна запись не импортируется. Продолжить?",
+            parent=self,
         ):
             return
-        try:
-            count = self.password_manager_app.import_records_from_csv(path)
-        except (ImportRecordsError, VaultError, OSError) as exc:
-            messagebox.showerror("Импорт отменён", str(exc), parent=self)
-            return
-        self.refresh_records()
-        messagebox.showinfo("Импорт завершён", f"Добавлено записей: {count}", parent=self)
+        self._start_csv_import(path)
+
+    def show_csv_help(self) -> None:
+        messagebox.showinfo(
+            "Форматы CSV",
+            "Поддерживаются стандартные файлы экспорта паролей:\n\n"
+            "Chrome / Edge / Brave / Opera:\n"
+            "name, url, username, password, note\n\n"
+            "Firefox:\n"
+            "url, username, password, httpRealm, formActionOrigin, ...\n\n"
+            "Safari / Apple Passwords:\n"
+            "Title, URL, Username, Password, Notes, OTPAuth\n\n"
+            "Формат определяется автоматически.",
+            parent=self,
+        )
+
+    def _start_csv_import(self, path: str) -> None:
+        self._cancel_lock_timer()
+        self._import_running = True
+        self._import_queue = queue.Queue()
+
+        self.import_dialog = ctk.CTkToplevel(self)
+        self.import_dialog.title("Импорт паролей")
+        self.import_dialog.geometry("460x210")
+        self.import_dialog.resizable(False, False)
+        self.import_dialog.transient(self)
+        self.import_dialog.grab_set()
+        self.import_dialog.protocol("WM_DELETE_WINDOW", lambda: None)
+        self.import_dialog.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            self.import_dialog,
+            text="Импорт паролей из браузера",
+            font=ctk.CTkFont(size=18, weight="bold"),
+        ).grid(row=0, column=0, padx=24, pady=(24, 8), sticky="ew")
+        self.import_progress_label = ctk.CTkLabel(self.import_dialog, text="Чтение CSV…")
+        self.import_progress_label.grid(row=1, column=0, padx=24, pady=5, sticky="ew")
+        self.import_progress_bar = ctk.CTkProgressBar(self.import_dialog, mode="determinate")
+        self.import_progress_bar.set(0)
+        self.import_progress_bar.grid(row=2, column=0, padx=28, pady=(8, 24), sticky="ew")
+
+        def report_progress(current: int, total: int, phase: str) -> None:
+            self._import_queue.put(("progress", current, total, phase))
+
+        def worker() -> None:
+            try:
+                count = self.password_manager_app.import_records_from_csv(path, report_progress)
+            except (ImportRecordsError, VaultError, OSError, ValueError) as exc:
+                self._import_queue.put(("error", str(exc)))
+            except Exception as exc:
+                self._import_queue.put(("error", f"Непредвиденная ошибка импорта: {exc}"))
+            else:
+                self._import_queue.put(("done", count))
+
+        threading.Thread(target=worker, name="browser-csv-import", daemon=True).start()
+        self._import_poll_job = self.after(50, self._poll_csv_import)
+
+    def _poll_csv_import(self) -> None:
+        self._import_poll_job = None
+        finished = False
+        while True:
+            try:
+                event = self._import_queue.get_nowait()
+            except queue.Empty:
+                break
+            if event[0] == "progress":
+                _, current, total, phase = event
+                fraction = current / total if total else 0
+                self.import_progress_bar.set(max(0, min(1, fraction)))
+                percentage = round(fraction * 100)
+                self.import_progress_label.configure(text=f"{phase}: {current} из {total} ({percentage}%)")
+            elif event[0] == "error":
+                self._finish_csv_import()
+                messagebox.showerror("Импорт отменён", event[1], parent=self)
+                finished = True
+                break
+            elif event[0] == "done":
+                count = event[1]
+                self.import_progress_bar.set(1)
+                self._finish_csv_import()
+                self.refresh_records()
+                messagebox.showinfo("Импорт завершён", f"Добавлено записей: {count}", parent=self)
+                finished = True
+                break
+        if not finished and self._import_running:
+            self._import_poll_job = self.after(75, self._poll_csv_import)
+
+    def _finish_csv_import(self) -> None:
+        self._import_running = False
+        if self.import_dialog is not None and self.import_dialog.winfo_exists():
+            with suppress(Exception):
+                self.import_dialog.grab_release()
+            self.import_dialog.destroy()
+        self.import_dialog = None
+        self._register_activity()
 
     def export_backup(self) -> None:
         path = filedialog.asksaveasfilename(
@@ -511,6 +631,8 @@ class Ui(ctk.CTk):
         self._register_activity()
 
     def lock_now(self) -> None:
+        if self._import_running:
+            return
         self._clear_clipboard_if_unchanged()
         self.password_manager_app.lock()
         self.unbind_all("<Any-KeyPress>")
@@ -539,6 +661,9 @@ class Ui(ctk.CTk):
             child.destroy()
 
     def on_close(self) -> None:
+        if self._import_running:
+            messagebox.showinfo("Импорт выполняется", "Дождитесь завершения импорта.", parent=self)
+            return
         self._cancel_lock_timer()
         if self._focus_job:
             self.after_cancel(self._focus_job)
