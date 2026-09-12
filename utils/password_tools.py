@@ -1,16 +1,22 @@
-import secrets, string
+from __future__ import annotations
+
+import secrets
+import string
+
+MIN_GENERATED_PASSWORD_LENGTH = 12
+MAX_GENERATED_PASSWORD_LENGTH = 128
+SPECIAL_CHARACTERS = "!@#$%&*+-_=.?"
+
 
 class PasswordGenerator:
-    def __init__(self):
-        pass
-
-    def generate(self, length_password):
-        length_password = int(length_password)
-        if 5 < length_password < 30:
-            symbols = string.digits + string.ascii_uppercase + string.ascii_lowercase + "!@#$%&*"
-            output_password = ""
-            for _ in range(length_password):
-                output_password += secrets.choice(symbols)
-            return output_password
-        else:
+    def generate(self, length_password: int | str) -> str | None:
+        length = int(length_password)
+        if not MIN_GENERATED_PASSWORD_LENGTH <= length <= MAX_GENERATED_PASSWORD_LENGTH:
             return None
+
+        groups = (string.ascii_lowercase, string.ascii_uppercase, string.digits, SPECIAL_CHARACTERS)
+        characters = [secrets.choice(group) for group in groups]
+        alphabet = "".join(groups)
+        characters.extend(secrets.choice(alphabet) for _ in range(length - len(characters)))
+        secrets.SystemRandom().shuffle(characters)
+        return "".join(characters)

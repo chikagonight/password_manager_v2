@@ -1,95 +1,352 @@
-import os.path
-import time
-from constants import RECORDS_FILE
-from utils.records_file_tools import SaverRecordsInFile
-from utils.file_tools import FileTools
-from utils.settings_tools import SettingsTools
+from __future__ import annotations
+
+import csv
+import json
+import logging
+from pathlib import Path
+from urllib.parse import urlparse
+
+from constants import (
+    APP_DATA_DIR,
+    LEGACY_RECORDS_FILE,
+    MIN_MASTER_PASSWORD_LENGTH,
+    SETTINGS_FILE,
+    VAULT_BACKUP_FILE,
+    VAULT_FILE,
+)
+from models import PasswordRecord, utc_now
 from utils.password_tools import PasswordGenerator
-from utils.logger_tools import Logger
-from password_manager_ui import Ui
-from record_window import RecordWindow
+from utils.settings_tools import SettingsTools
+from utils.vault_store import VaultError, VaultStore
+
+LOGGER = logging.getLogger(__name__)
+
+
+class ValidationError(ValueError):
+    pass
+
+
+class ImportRecordsError(ValidationError):
+    pass
 
 
 class PasswordManagerApp:
-    def __init__(self):
-        self.file_tools = FileTools()
-        self.records_file_tools = SaverRecordsInFile()
-        self.settings_tools = SettingsTools()
+    def __init__(
+        self,
+        *,
+        data_dir: Path = APP_DATA_DIR,
+        legacy_records_path: Path = LEGACY_RECORDS_FILE,
+    ):
+        self.data_dir = Path(data_dir)
+        self.legacy_records_path = Path(legacy_records_path)
+        self.store = VaultStore(self.data_dir / VAULT_FILE.name, self.data_dir / VAULT_BACKUP_FILE.name)
+        self.settings_tools = SettingsTools(
+            self.data_dir / SETTINGS_FILE.name,
+            self.legacy_records_path.with_name("settings.json"),
+        )
         self.password_generator = PasswordGenerator()
-        self.logger_tools = Logger()
-        self.record_window = None
-        self.create_records_cards = None
-        if not self.file_tools.check_file_exist(RECORDS_FILE):
-            self.logger_tools.log(f"Файл {RECORDS_FILE} не найден")
-            self.file_tools.create_json_file(RECORDS_FILE)
-            self.logger_tools.log(f"Создан новый {RECORDS_FILE}")
-            time.sleep(1)
-        self.id_arr = self.records_file_tools.load_ids()
-        self.appearance_mode = self.settings_tools.load()
+        self.settings = self.settings_tools.load()
+        self._records: list[PasswordRecord] = []
 
-    def save_record(self, record_name, service_name, login, password, repeat_password, url_link_service, note):
-        records_file = RECORDS_FILE
-        if password == repeat_password:
-            record = self.records_file_tools.get_record_object(record_name, service_name, login, password,
-                                                               url_link_service, note)
-            if self.file_tools.check_file_exist(records_file):
-                if self.file_tools.check_file_empty(records_file):
-                    self.records_file_tools.create_records_file(record, records_file)
-                else:
-                    self.records_file_tools.append_new_record(record, records_file)
-            else:
-                self.records_file_tools.create_records_file(record, records_file)
+    @property
+    def is_locked(self) -> bool:
+        return not self.store.is_unlocked
 
-    def delete_record(self, record_id):
-        record_file = self.records_file_tools.delete_record(record_id)
-        self.file_tools.write_to_json_file(record_file, RECORDS_FILE)
-        self.create_records_cards()
-        self.record_window.destroy()
+    @property
+    def vault_exists(self) -> bool:
+        return self.store.exists
 
-    def get_records(self, file) -> list:
-        return self.records_file_tools.load(file)
+    @property
+    def has_legacy_records(self) -> bool:
+        return self.legacy_records_path.is_file() and self.legacy_records_path.stat().st_size > 0
 
-    def password_generate(self, length_password) -> str:
-        return self.password_generator.generate(length_password)
+    def create_vault(
+        self,
+        master_password: str,
+        repeat_password: str,
+        *,
+        migrate_legacy: bool = False,
+    ) -> int:
+        self._validate_master_password(master_password, repeat_password)
+        records: list[PasswordRecord] = []
+        if migrate_legacy:
+            records = self._load_legacy_records()
+        self._records = self.store.create(master_password, records)
 
-    def show_password_on_click(self, field, button):
-        if field.cget("show") == "*":
-            field.configure(show = "")
-            button.configure(text = "Скрыть")
-        else:
-            field.configure(show = "*")
-            button.configure(text = "Показать")
+        if migrate_legacy:
+            # Preserve a recoverable encrypted copy before removing plaintext.
+            migration_backup = self.data_dir / "backups" / "legacy-migration.pm2"
+            self.store.create_backup(migration_backup)
+            self.legacy_records_path.unlink()
+        return len(self._records)
+
+    def unlock(self, master_password: str) -> int:
+        if not master_password:
+            raise ValidationError("Введите мастер-пароль")
+        self._records = self.store.unlock(master_password)
+        return len(self._records)
+
+    def lock(self) -> None:
+        self.store.lock()
+        for record in self._records:
+            record.password = ""
+        self._records.clear()
+
+    def get_records(self, query: str = "") -> list[PasswordRecord]:
+        self._require_unlocked()
+        normalized = query.strip().casefold()
+        if not normalized:
+            return list(self._records)
+        return [
+            record
+            for record in self._records
+            if normalized
+            in " ".join(
+                (
+                    record.record_name,
+                    record.service_name,
+                    record.login,
+                    record.url_link_service,
+                    record.note,
+                )
+            ).casefold()
+        ]
+
+    def get_record(self, record_id: str) -> PasswordRecord:
+        self._require_unlocked()
+        for record in self._records:
+            if record.id == str(record_id):
+                return record
+        raise ValidationError("Запись не найдена")
+
+    def save_record(
+        self,
+        record_name: str,
+        service_name: str,
+        login: str,
+        password: str,
+        repeat_password: str,
+        url_link_service: str = "",
+        note: str = "",
+    ) -> PasswordRecord:
+        self._require_unlocked()
+        values = self._validate_record_fields(
+            record_name,
+            service_name,
+            login,
+            password,
+            repeat_password,
+            url_link_service,
+        )
+        record = PasswordRecord.create(
+            record_name=values[0],
+            service_name=values[1],
+            login=values[2],
+            password=password,
+            url_link_service=values[3],
+            note=note,
+        )
+        self._records.insert(0, record)
+        try:
+            self.store.save(self._records)
+        except Exception:
+            self._records.remove(record)
+            raise
+        return record
+
+    def update_record(
+        self,
+        record_id: str,
+        *,
+        record_name: str,
+        service_name: str,
+        login: str,
+        password: str,
+        repeat_password: str,
+        url_link_service: str = "",
+        note: str = "",
+    ) -> PasswordRecord:
+        record = self.get_record(record_id)
+        values = self._validate_record_fields(
+            record_name,
+            service_name,
+            login,
+            password,
+            repeat_password,
+            url_link_service,
+        )
+        previous = record.to_dict()
+        record.record_name, record.service_name, record.login, record.url_link_service = values
+        record.password = password
+        record.note = note.strip()
+        record.updated_at = utc_now()
+        try:
+            self.store.save(self._records)
+        except Exception:
+            restored = PasswordRecord.from_dict(previous)
+            index = self._records.index(record)
+            self._records[index] = restored
+            raise
+        return record
+
+    def delete_record(self, record_id: str) -> bool:
+        record = self.get_record(record_id)
+        index = self._records.index(record)
+        removed = self._records.pop(index)
+        try:
+            self.store.save(self._records)
+        except Exception:
+            self._records.insert(index, removed)
+            raise
+        removed.password = ""
+        return True
+
+    def password_generate(self, length_password: int | str) -> str:
+        generated = self.password_generator.generate(length_password)
+        if not generated:
+            raise ValidationError("Длина генерируемого пароля должна быть от 12 до 128 символов")
+        LOGGER.info("Сгенерирован пароль длиной %s символов", len(generated))
+        return generated
+
+    def import_records_from_csv(self, path_to_file: Path | str) -> int:
+        self._require_unlocked()
+        path = Path(path_to_file)
+        try:
+            with path.open("r", encoding="utf-8-sig", newline="") as source:
+                rows = list(csv.DictReader(source))
+        except OSError as exc:
+            raise ImportRecordsError(f"Не удалось открыть CSV: {exc}") from exc
+        if not rows:
+            raise ImportRecordsError("CSV не содержит записей")
+
+        imported: list[PasswordRecord] = []
+        errors: list[str] = []
+        for number, row in enumerate(rows, start=2):
+            normalized = {str(key).strip().casefold(): (value or "") for key, value in row.items() if key}
+            name = self._first_value(normalized, "name", "record_name", "title")
+            service = self._first_value(normalized, "service", "service_name", "name")
+            login = self._first_value(normalized, "username", "login", "user")
+            password = self._first_value(normalized, "password", "pass")
+            url = self._first_value(normalized, "url", "website", "url_link_service")
+            note = self._first_value(normalized, "note", "notes", "comment")
+            try:
+                values = self._validate_record_fields(name, service, login, password, password, url)
+            except ValidationError as exc:
+                errors.append(f"строка {number}: {exc}")
+                continue
+            imported.append(
+                PasswordRecord.create(
+                    record_name=values[0],
+                    service_name=values[1],
+                    login=values[2],
+                    password=password,
+                    url_link_service=values[3],
+                    note=note,
+                )
+            )
+        if errors:
+            preview = "; ".join(errors[:5])
+            suffix = f"; ещё ошибок: {len(errors) - 5}" if len(errors) > 5 else ""
+            raise ImportRecordsError(f"Импорт отменён: {preview}{suffix}")
+
+        self._records = imported + self._records
+        try:
+            self.store.save(self._records)
+        except Exception:
+            del self._records[: len(imported)]
+            raise
+        return len(imported)
+
+    def export_encrypted_backup(self, destination: Path | str) -> Path:
+        self._require_unlocked()
+        return self.store.create_backup(Path(destination))
+
+    def restore_encrypted_backup(self, source: Path | str, master_password: str) -> None:
+        if not master_password:
+            raise ValidationError("Введите мастер-пароль резервной копии")
+        self.store.restore_backup(master_password, Path(source))
+        self._records.clear()
+
+    def change_master_password(self, current_password: str, new_password: str, repeat_password: str) -> None:
+        self._require_unlocked()
+        self._validate_master_password(new_password, repeat_password)
+        self.store.change_master_password(current_password, new_password, self._records)
+
+    def save_setting(self, key: str, value: object) -> None:
+        self.settings_tools.save(key, self.settings, value)
+
+    def _load_legacy_records(self) -> list[PasswordRecord]:
+        try:
+            with self.legacy_records_path.open("r", encoding="utf-8") as source:
+                payload = json.load(source)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValidationError("Старый records.json повреждён; миграция отменена") from exc
+        if not isinstance(payload, list):
+            raise ValidationError("Старый records.json имеет неверный формат")
+        records = [PasswordRecord.from_dict(item) for item in payload if isinstance(item, dict)]
+        for record in records:
+            self._validate_record_fields(
+                record.record_name,
+                record.service_name,
+                record.login,
+                record.password,
+                record.password,
+                record.url_link_service,
+            )
+        return records
+
+    @staticmethod
+    def _validate_master_password(password: str, repeat_password: str) -> None:
+        if password != repeat_password:
+            raise ValidationError("Мастер-пароли не совпадают")
+        if len(password) < MIN_MASTER_PASSWORD_LENGTH:
+            raise ValidationError(f"Мастер-пароль должен содержать не менее {MIN_MASTER_PASSWORD_LENGTH} символов")
+
+    @staticmethod
+    def _validate_record_fields(
+        record_name: str,
+        service_name: str,
+        login: str,
+        password: str,
+        repeat_password: str,
+        url_link_service: str,
+    ) -> tuple[str, str, str, str]:
+        record_name = record_name.strip()
+        service_name = service_name.strip()
+        login = login.strip()
+        url_link_service = url_link_service.strip()
+        if not record_name:
+            raise ValidationError("Укажите имя записи")
+        if not service_name:
+            raise ValidationError("Укажите сервис")
+        if not login:
+            raise ValidationError("Укажите логин")
+        if not password:
+            raise ValidationError("Пароль не может быть пустым")
+        if password != repeat_password:
+            raise ValidationError("Пароли не совпадают")
+        if url_link_service:
+            parsed = urlparse(url_link_service)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValidationError("URL должен начинаться с http:// или https://")
+        return record_name, service_name, login, url_link_service
+
+    @staticmethod
+    def _first_value(row: dict[str, str], *keys: str) -> str:
+        return next((row[key] for key in keys if row.get(key)), "")
+
+    def _require_unlocked(self) -> None:
+        if self.is_locked:
+            raise VaultError("Хранилище заблокировано")
 
 
-    def load_settings(self):
-        return self.settings_tools.load()
+def main() -> None:
+    from password_manager_ui import Ui
 
-    def save_settings(self, key, file_config, new_value, file):
-        return self.settings_tools.save(key, file_config, new_value, file)
-
-    def log_event(self, message: str):
-        self.logger_tools.log(message)
-
-    def open_window_record(self, parent, record):
-        if self.record_window and self.record_window.winfo_exists():
-            self.record_window.destroy()
-        self.record_window = RecordWindow(parent = parent, record = record, password_manager_app = self)
-
-    def import_records_from_csv(self, path_to_file):
-        path_to_file = os.path.normpath(path_to_file)
-        for row in self.file_tools.parse_csv_file(path_to_file):
-            record = self.records_file_tools.get_record_object(
-                record_name = row["name"],
-                service_name = row["name"],
-                login = row["username"],
-                password = row["password"],
-                url_link_service = row["url"],
-                note = row["note"])
-            self.records_file_tools.append_new_record(record, RECORDS_FILE)
-            self.create_records_cards()
-
-
-if __name__ == '__main__':
-    password_manager_app = PasswordManagerApp()
-    app = Ui(password_manager_app)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    app = Ui(PasswordManagerApp())
     app.mainloop()
+
+
+if __name__ == "__main__":
+    main()
