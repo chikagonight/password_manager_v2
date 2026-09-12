@@ -9,9 +9,13 @@ from tkinter import filedialog, messagebox, simpledialog
 import customtkinter as ctk
 
 from constants import APP_TITLE, MIN_MASTER_PASSWORD_LENGTH
+from models import PasswordRecord
 from password_manager_app import ImportRecordsError, PasswordManagerApp, ValidationError
 from record_window import RecordWindow
 from utils.vault_store import VaultError
+
+RECORDS_BATCH_SIZE = 20
+SEARCH_DEBOUNCE_MS = 180
 
 
 class Ui(ctk.CTk):
@@ -30,7 +34,11 @@ class Ui(ctk.CTk):
         self._focus_job: str | None = None
         self._clipboard_job: str | None = None
         self._status_job: str | None = None
+        self._search_job: str | None = None
         self._clipboard_value: str | None = None
+        self._record_results: list[PasswordRecord] = []
+        self._rendered_record_count = 0
+        self._load_more_button: ctk.CTkButton | None = None
         self._import_running = False
         self._import_poll_job: str | None = None
         self._import_queue: queue.Queue[tuple] = queue.Queue()
@@ -41,6 +49,10 @@ class Ui(ctk.CTk):
 
     def show_lock_screen(self) -> None:
         self._cancel_lock_timer()
+        self._cancel_search_refresh()
+        self._record_results.clear()
+        self._rendered_record_count = 0
+        self._load_more_button = None
         if self._focus_job:
             self.after_cancel(self._focus_job)
             self._focus_job = None
@@ -181,14 +193,18 @@ class Ui(ctk.CTk):
             search_frame, placeholder_text="Поиск по имени, сервису, логину, URL или заметке"
         )
         self.search_records_input.grid(row=0, column=0, padx=(0, 6), sticky="ew")
-        self.search_records_input.bind("<KeyRelease>", lambda _event: self.refresh_records())
+        self.search_records_input.bind("<KeyRelease>", self._schedule_records_refresh)
         ctk.CTkButton(search_frame, text="Очистить", width=90, command=self.clear_search).grid(
             row=0, column=1, sticky="e"
         )
+        self.records_count_label = ctk.CTkLabel(search_frame, text="", text_color="gray60", height=18)
+        self.records_count_label.grid(row=1, column=0, columnspan=2, pady=(3, 0), sticky="e")
 
         self.records_field = ctk.CTkScrollableFrame(self.records_tab, border_width=1)
         self.records_field.grid(row=1, column=0, padx=8, pady=(5, 8), sticky="nsew")
         self.records_field.grid_columnconfigure(0, weight=1)
+        self._record_name_font = ctk.CTkFont(size=16, weight="bold")
+        self._record_action_font = ctk.CTkFont(size=12)
 
     def _create_record_form(self) -> None:
         self.create_tab.grid_columnconfigure(0, weight=1)
@@ -304,30 +320,107 @@ class Ui(ctk.CTk):
     def refresh_records(self) -> None:
         if self.password_manager_app.is_locked or not hasattr(self, "records_field"):
             return
+        self._cancel_search_refresh()
         for child in self.records_field.winfo_children():
             child.destroy()
         query = self.search_records_input.get() if hasattr(self, "search_records_input") else ""
-        records = self.password_manager_app.get_records(query)
-        if not records:
-            text = "Ничего не найдено" if query else "Пока нет сохранённых записей"
+        has_query = bool(query.strip())
+        all_records = self.password_manager_app.get_records()
+        self._record_results = self.password_manager_app.get_records(query) if has_query else all_records
+        total_count = len(all_records)
+        result_count = len(self._record_results)
+        count_text = f"Найдено: {result_count} из {total_count}" if has_query else f"Всего записей: {total_count}"
+        self.records_count_label.configure(text=count_text)
+        self._rendered_record_count = 0
+        self._load_more_button = None
+        if not self._record_results:
+            text = "Ничего не найдено" if has_query else "Пока нет сохранённых записей"
             ctk.CTkLabel(self.records_field, text=text, text_color="gray60").grid(
                 row=0, column=0, padx=15, pady=30
             )
             return
-        for row, record in enumerate(records):
-            card = ctk.CTkFrame(self.records_field, border_width=1)
-            card.grid(row=row, column=0, padx=3, pady=3, sticky="ew")
-            card.grid_columnconfigure(0, weight=1)
-            ctk.CTkLabel(card, text=record.record_name, font=ctk.CTkFont(size=16, weight="bold")).grid(
-                row=0, column=0, padx=12, pady=(8, 0), sticky="w"
+        self._append_record_batch()
+
+    def _schedule_records_refresh(self, _event=None) -> None:
+        self._cancel_search_refresh()
+        self._search_job = self.after(SEARCH_DEBOUNCE_MS, self._run_scheduled_records_refresh)
+
+    def _run_scheduled_records_refresh(self) -> None:
+        self._search_job = None
+        self.refresh_records()
+
+    def _cancel_search_refresh(self) -> None:
+        if self._search_job:
+            self.after_cancel(self._search_job)
+            self._search_job = None
+
+    def _append_record_batch(self) -> None:
+        if self.password_manager_app.is_locked or not hasattr(self, "records_field"):
+            return
+        if self._load_more_button is not None and self._load_more_button.winfo_exists():
+            self._load_more_button.destroy()
+        self._load_more_button = None
+
+        start = self._rendered_record_count
+        end = min(start + RECORDS_BATCH_SIZE, len(self._record_results))
+        for row, record in enumerate(self._record_results[start:end], start=start):
+            self._create_record_card(row, record)
+        self._rendered_record_count = end
+
+        if end < len(self._record_results):
+            self._load_more_button = ctk.CTkButton(
+                self.records_field,
+                text=f"Показать ещё  ·  {end} из {len(self._record_results)}",
+                command=self._append_record_batch,
+                height=34,
+                fg_color="transparent",
+                border_width=1,
             )
-            details = "  •  ".join(value for value in (record.service_name, record.login) if value)
-            ctk.CTkLabel(card, text=details or "Поля не заполнены", text_color="gray60").grid(
-                row=1, column=0, padx=12, pady=(1, 8), sticky="w"
-            )
-            ctk.CTkButton(card, text="Открыть", width=100, command=lambda item=record: self.open_record(item)).grid(
-                row=0, column=1, rowspan=2, padx=10, pady=8
-            )
+            self._load_more_button.grid(row=end, column=0, padx=3, pady=8, sticky="ew")
+
+    def _create_record_card(self, row: int, record: PasswordRecord) -> None:
+        card = ctk.CTkFrame(self.records_field, border_width=1)
+        card.grid(row=row, column=0, padx=3, pady=3, sticky="ew")
+        card.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(card, text=record.record_name, font=self._record_name_font).grid(
+            row=0, column=0, padx=12, pady=(8, 0), sticky="w"
+        )
+        details = "  •  ".join(value for value in (record.service_name, record.login) if value)
+        ctk.CTkLabel(card, text=details or "Поля не заполнены", text_color="gray60").grid(
+            row=1, column=0, padx=12, pady=(1, 5), sticky="w"
+        )
+
+        actions = ctk.CTkFrame(card, fg_color="transparent")
+        actions.grid(row=2, column=0, padx=10, pady=(0, 8), sticky="ew")
+        for column in range(3):
+            actions.grid_columnconfigure(column, weight=1, uniform="record-actions")
+        ctk.CTkButton(
+            actions,
+            text="Копировать логин",
+            command=lambda item=record: self.copy_to_clipboard(item.login, "Логин"),
+            state="normal" if record.login else "disabled",
+            height=28,
+            font=self._record_action_font,
+            fg_color="transparent",
+            border_width=1,
+        ).grid(row=0, column=0, padx=(0, 3), sticky="ew")
+        ctk.CTkButton(
+            actions,
+            text="Копировать пароль",
+            command=lambda item=record: self.copy_to_clipboard(item.password, "Пароль"),
+            state="normal" if record.password else "disabled",
+            height=28,
+            font=self._record_action_font,
+            fg_color="transparent",
+            border_width=1,
+        ).grid(row=0, column=1, padx=3, sticky="ew")
+        ctk.CTkButton(
+            actions,
+            text="Открыть",
+            command=lambda item=record: self.open_record(item),
+            height=28,
+            font=self._record_action_font,
+        ).grid(row=0, column=2, padx=(3, 0), sticky="ew")
 
     def open_record(self, record) -> None:
         self._close_record_window()
