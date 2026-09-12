@@ -19,8 +19,8 @@ class RecordWindow(ctk.CTkToplevel):
         self.is_editing = False
 
         self.title(record.record_name)
-        self.geometry("500x700")
-        self.minsize(460, 620)
+        self.geometry("480x620")
+        self.minsize(440, 540)
         self.transient(parent)
         self.grab_set()
         self.grid_columnconfigure(0, weight=1)
@@ -31,7 +31,7 @@ class RecordWindow(ctk.CTkToplevel):
 
     def _create_widgets(self) -> None:
         frame = ctk.CTkFrame(self)
-        frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        frame.grid(row=0, column=0, padx=6, pady=6, sticky="nsew")
         frame.grid_columnconfigure(0, weight=1)
         frame.grid_rowconfigure(11, weight=1)
 
@@ -40,30 +40,30 @@ class RecordWindow(ctk.CTkToplevel):
         self.link_service = self._entry_row(frame, 4, "URL", self.record.url_link_service)
         self.login_service = self._entry_row(frame, 6, "Логин", self.record.login)
 
-        ctk.CTkLabel(frame, text="Пароль").grid(row=8, column=0, padx=10, pady=(6, 2), sticky="w")
+        ctk.CTkLabel(frame, text="Пароль", height=22).grid(row=8, column=0, padx=8, pady=(3, 1), sticky="w")
         password_panel = ctk.CTkFrame(frame, fg_color="transparent")
-        password_panel.grid(row=9, column=0, padx=8, pady=(0, 6), sticky="ew")
+        password_panel.grid(row=9, column=0, padx=7, pady=(0, 3), sticky="ew")
         password_panel.grid_columnconfigure(0, weight=1)
-        self.password_service = ctk.CTkEntry(password_panel, show="*")
+        self.password_service = ctk.CTkEntry(password_panel, show="*", height=30)
         self.password_service.insert(0, self.record.password)
         self.password_service.configure(state="readonly")
         self.password_service.grid(row=0, column=0, padx=(0, 5), sticky="ew")
         self.show_password_button = ctk.CTkButton(
-            password_panel, text="Показать", width=90, command=self.toggle_password
+            password_panel, text="Показать", width=82, height=30, command=self.toggle_password
         )
-        self.show_password_button.grid(row=0, column=1, padx=5)
-        ctk.CTkButton(password_panel, text="Копировать", width=90, command=self.copy_password).grid(
-            row=0, column=2, padx=(5, 0)
+        self.show_password_button.grid(row=0, column=1, padx=3)
+        ctk.CTkButton(password_panel, text="Копировать", width=82, height=30, command=self.copy_password).grid(
+            row=0, column=2, padx=(3, 0)
         )
 
-        ctk.CTkLabel(frame, text="Заметка").grid(row=10, column=0, padx=10, pady=(6, 2), sticky="w")
+        ctk.CTkLabel(frame, text="Заметка", height=22).grid(row=10, column=0, padx=8, pady=(3, 1), sticky="w")
         self.note_service = ctk.CTkTextbox(frame, border_width=1)
         self.note_service.insert("1.0", self.record.note)
         self.note_service.configure(state="disabled")
-        self.note_service.grid(row=11, column=0, padx=8, pady=(0, 6), sticky="nsew")
+        self.note_service.grid(row=11, column=0, padx=7, pady=(0, 3), sticky="nsew")
 
         buttons = ctk.CTkFrame(frame, fg_color="transparent")
-        buttons.grid(row=12, column=0, padx=8, pady=(10, 8), sticky="ew")
+        buttons.grid(row=12, column=0, padx=7, pady=(5, 5), sticky="ew")
         buttons.grid_columnconfigure((0, 1), weight=1)
         self.edit_button = ctk.CTkButton(buttons, text="Изменить", command=self.toggle_edit)
         self.edit_button.grid(row=0, column=0, padx=(0, 5), sticky="ew")
@@ -72,18 +72,18 @@ class RecordWindow(ctk.CTkToplevel):
         if not self.record.url_link_service:
             self.browser_button.configure(state="disabled")
         ctk.CTkButton(buttons, text="Копировать логин", command=self.copy_login).grid(
-            row=1, column=0, padx=(0, 5), pady=(8, 0), sticky="ew"
+            row=1, column=0, padx=(0, 5), pady=(5, 0), sticky="ew"
         )
         ctk.CTkButton(
             buttons, text="Удалить", command=self.delete_record, fg_color="#b33a3a", hover_color="#8f2d2d"
-        ).grid(row=1, column=1, padx=(5, 0), pady=(8, 0), sticky="ew")
+        ).grid(row=1, column=1, padx=(5, 0), pady=(5, 0), sticky="ew")
 
     def _entry_row(self, parent, row: int, label: str, value: str):
-        ctk.CTkLabel(parent, text=label).grid(row=row, column=0, padx=10, pady=(6, 2), sticky="w")
-        entry = ctk.CTkEntry(parent)
+        ctk.CTkLabel(parent, text=label, height=22).grid(row=row, column=0, padx=8, pady=(3, 1), sticky="w")
+        entry = ctk.CTkEntry(parent, height=30)
         entry.insert(0, value)
         entry.configure(state="readonly")
-        entry.grid(row=row + 1, column=0, padx=8, pady=(0, 4), sticky="ew")
+        entry.grid(row=row + 1, column=0, padx=7, pady=(0, 2), sticky="ew")
         return entry
 
     def toggle_edit(self) -> None:

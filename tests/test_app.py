@@ -37,12 +37,15 @@ class PasswordManagerAppTests(unittest.TestCase):
 
     def test_master_password_validation_happens_before_vault_creation(self):
         with self.assertRaises(ValidationError):
-            self.app.create_vault("too short", "too short")
+            self.app.create_vault("1234567", "1234567")
         self.assertFalse(self.app.vault_exists)
 
         with self.assertRaises(ValidationError):
             self.app.create_vault(MASTER_PASSWORD, "different passphrase")
         self.assertFalse(self.app.vault_exists)
+
+        self.app.create_vault("12345678", "12345678")
+        self.assertTrue(self.app.vault_exists)
 
     def test_crud_round_trip(self):
         self.create_vault()

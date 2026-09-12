@@ -3,7 +3,7 @@ from __future__ import annotations
 import secrets
 import string
 
-MIN_GENERATED_PASSWORD_LENGTH = 12
+MIN_GENERATED_PASSWORD_LENGTH = 8
 MAX_GENERATED_PASSWORD_LENGTH = 128
 SPECIAL_CHARACTERS = "!@#$%&*+-_=.?"
 

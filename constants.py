@@ -9,7 +9,7 @@ APP_TITLE = "Password Manager"
 VAULT_FORMAT = "password-manager-vault"
 VAULT_VERSION = 1
 RECORDS_SCHEMA_VERSION = 1
-MIN_MASTER_PASSWORD_LENGTH = 12
+MIN_MASTER_PASSWORD_LENGTH = 8
 
 
 def default_data_dir() -> Path:

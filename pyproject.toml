@@ -30,6 +30,7 @@ py-modules = [
     "password_manager_app",
     "password_manager_ui",
     "record_window",
+    "ui_compat",
 ]
 
 [tool.setuptools.packages.find]

@@ -12,10 +12,21 @@ from constants import APP_TITLE, MIN_MASTER_PASSWORD_LENGTH
 from models import PasswordRecord
 from password_manager_app import ImportRecordsError, PasswordManagerApp, ValidationError
 from record_window import RecordWindow
+from ui_compat import configure_stable_windows_dpi
+from utils.password_tools import MIN_GENERATED_PASSWORD_LENGTH
 from utils.vault_store import VaultError
+
+configure_stable_windows_dpi()
 
 RECORDS_BATCH_SIZE = 20
 SEARCH_DEBOUNCE_MS = 180
+OUTLINE_BUTTON_STYLE = {
+    "fg_color": "transparent",
+    "hover_color": ("gray82", "gray28"),
+    "border_color": ("gray48", "gray55"),
+    "text_color": ("gray20", "gray90"),
+    "text_color_disabled": ("gray45", "gray55"),
+}
 
 
 class Ui(ctk.CTk):
@@ -26,8 +37,8 @@ class Ui(ctk.CTk):
         super().__init__()
 
         self.title(f"{APP_TITLE} 1.0")
-        self.geometry("620x820")
-        self.minsize(540, 700)
+        self.geometry("600x760")
+        self.minsize(520, 620)
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
         self._lock_job: str | None = None
@@ -62,8 +73,8 @@ class Ui(ctk.CTk):
         self._close_record_window()
         self._clear_root()
 
-        container = ctk.CTkFrame(self, width=480, height=430)
-        container.grid(row=0, column=0, padx=30, pady=30)
+        container = ctk.CTkFrame(self, width=460, height=370)
+        container.grid(row=0, column=0, padx=20, pady=20)
         container.grid_propagate(False)
         container.grid_columnconfigure(0, weight=1)
 
@@ -76,14 +87,14 @@ class Ui(ctk.CTk):
             "Восстановить забытый мастер-пароль невозможно."
         )
         ctk.CTkLabel(container, text=heading, font=ctk.CTkFont(size=24, weight="bold")).grid(
-            row=0, column=0, padx=30, pady=(38, 10), sticky="ew"
+            row=0, column=0, padx=24, pady=(28, 8), sticky="ew"
         )
         ctk.CTkLabel(container, text=description, wraplength=400).grid(
-            row=1, column=0, padx=30, pady=(0, 22), sticky="ew"
+            row=1, column=0, padx=24, pady=(0, 14), sticky="ew"
         )
 
         self.master_password_entry = ctk.CTkEntry(container, placeholder_text="Мастер-пароль", show="*")
-        self.master_password_entry.grid(row=2, column=0, padx=45, pady=6, sticky="ew")
+        self.master_password_entry.grid(row=2, column=0, padx=35, pady=4, sticky="ew")
         self.master_password_entry.bind("<Return>", lambda _event: self._submit_unlock())
 
         row = 3
@@ -91,7 +102,7 @@ class Ui(ctk.CTk):
             self.repeat_master_password_entry = ctk.CTkEntry(
                 container, placeholder_text="Повторите мастер-пароль", show="*"
             )
-            self.repeat_master_password_entry.grid(row=row, column=0, padx=45, pady=6, sticky="ew")
+            self.repeat_master_password_entry.grid(row=row, column=0, padx=35, pady=4, sticky="ew")
             self.repeat_master_password_entry.bind("<Return>", lambda _event: self._submit_unlock())
             row += 1
 
@@ -101,11 +112,11 @@ class Ui(ctk.CTk):
                     container,
                     text="Зашифровать записи из старого records.json\nи удалить его после проверенной миграции",
                     variable=self.migrate_legacy_var,
-                ).grid(row=row, column=0, padx=45, pady=10, sticky="w")
+                ).grid(row=row, column=0, padx=35, pady=6, sticky="w")
                 row += 1
 
         self.unlock_error_label = ctk.CTkLabel(container, text="", text_color="#e57373", wraplength=390)
-        self.unlock_error_label.grid(row=row, column=0, padx=35, pady=5, sticky="ew")
+        self.unlock_error_label.grid(row=row, column=0, padx=30, pady=3, sticky="ew")
         row += 1
 
         ctk.CTkButton(
@@ -113,7 +124,7 @@ class Ui(ctk.CTk):
             text="Разблокировать" if is_existing else "Создать хранилище",
             command=self._submit_unlock,
             height=38,
-        ).grid(row=row, column=0, padx=45, pady=(8, 6), sticky="ew")
+        ).grid(row=row, column=0, padx=35, pady=(5, 4), sticky="ew")
         row += 1
 
         if is_existing and self.password_manager_app.store.backup_path.is_file():
@@ -121,9 +132,9 @@ class Ui(ctk.CTk):
                 container,
                 text="Восстановить последнюю резервную копию",
                 command=self._restore_default_backup,
-                fg_color="transparent",
                 border_width=1,
-            ).grid(row=row, column=0, padx=45, pady=6, sticky="ew")
+                **OUTLINE_BUTTON_STYLE,
+            ).grid(row=row, column=0, padx=35, pady=4, sticky="ew")
 
         self._focus_job = self.after(150, self._focus_master_password)
 
@@ -170,7 +181,7 @@ class Ui(ctk.CTk):
         self.bind_all("<Any-Button>", self._register_activity, add="+")
 
         self.tabviews = ctk.CTkTabview(self, anchor="w")
-        self.tabviews.grid(row=0, column=0, padx=8, pady=8, sticky="nsew")
+        self.tabviews.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
         self.records_tab = self.tabviews.add("Пароли")
         self.create_tab = self.tabviews.add("Создать запись")
         self.settings_tab = self.tabviews.add("Настройки")
@@ -178,7 +189,7 @@ class Ui(ctk.CTk):
         self._create_record_form()
         self._create_settings_tab()
         self.status_label = ctk.CTkLabel(self, text="", height=20, text_color="gray60")
-        self.status_label.grid(row=1, column=0, padx=12, pady=(0, 5), sticky="w")
+        self.status_label.grid(row=1, column=0, padx=8, pady=(0, 3), sticky="w")
         self.refresh_records()
         self._register_activity()
 
@@ -186,24 +197,25 @@ class Ui(ctk.CTk):
         self.records_tab.grid_columnconfigure(0, weight=1)
         self.records_tab.grid_rowconfigure(1, weight=1)
         search_frame = ctk.CTkFrame(self.records_tab, fg_color="transparent")
-        search_frame.grid(row=0, column=0, padx=8, pady=(8, 5), sticky="ew")
+        search_frame.grid(row=0, column=0, padx=5, pady=(5, 3), sticky="ew")
         search_frame.grid_columnconfigure(0, weight=1)
 
         self.search_records_input = ctk.CTkEntry(
             search_frame, placeholder_text="Поиск по имени, сервису, логину, URL или заметке"
         )
-        self.search_records_input.grid(row=0, column=0, padx=(0, 6), sticky="ew")
+        self.search_records_input.configure(height=30)
+        self.search_records_input.grid(row=0, column=0, padx=(0, 4), sticky="ew")
         self.search_records_input.bind("<KeyRelease>", self._schedule_records_refresh)
-        ctk.CTkButton(search_frame, text="Очистить", width=90, command=self.clear_search).grid(
+        ctk.CTkButton(search_frame, text="Очистить", width=82, height=30, command=self.clear_search).grid(
             row=0, column=1, sticky="e"
         )
-        self.records_count_label = ctk.CTkLabel(search_frame, text="", text_color="gray60", height=18)
-        self.records_count_label.grid(row=1, column=0, columnspan=2, pady=(3, 0), sticky="e")
+        self.records_count_label = ctk.CTkLabel(search_frame, text="", text_color="gray60", height=16)
+        self.records_count_label.grid(row=1, column=0, columnspan=2, pady=(1, 0), sticky="e")
 
         self.records_field = ctk.CTkScrollableFrame(self.records_tab, border_width=1)
-        self.records_field.grid(row=1, column=0, padx=8, pady=(5, 8), sticky="nsew")
+        self.records_field.grid(row=1, column=0, padx=5, pady=(3, 5), sticky="nsew")
         self.records_field.grid_columnconfigure(0, weight=1)
-        self._record_name_font = ctk.CTkFont(size=16, weight="bold")
+        self._record_name_font = ctk.CTkFont(size=15, weight="bold")
         self._record_action_font = ctk.CTkFont(size=12)
 
     def _create_record_form(self) -> None:
@@ -211,7 +223,7 @@ class Ui(ctk.CTk):
         self.create_tab.grid_rowconfigure(2, weight=1)
 
         basic_frame = ctk.CTkFrame(self.create_tab)
-        basic_frame.grid(row=0, column=0, padx=8, pady=(10, 5), sticky="ew")
+        basic_frame.grid(row=0, column=0, padx=5, pady=(5, 3), sticky="ew")
         basic_frame.grid_columnconfigure(0, weight=1)
         self.name_record_field = self._labeled_entry(basic_frame, 0, "Имя записи")
         self.name_service_field = self._labeled_entry(basic_frame, 2, "Сервис")
@@ -220,102 +232,107 @@ class Ui(ctk.CTk):
         )
 
         password_frame = ctk.CTkFrame(self.create_tab)
-        password_frame.grid(row=1, column=0, padx=8, pady=5, sticky="ew")
+        password_frame.grid(row=1, column=0, padx=5, pady=3, sticky="ew")
         password_frame.grid_columnconfigure(0, weight=1)
         self.login_input = self._labeled_entry(password_frame, 0, "Логин")
-        ctk.CTkLabel(password_frame, text="Пароль").grid(row=2, column=0, padx=10, pady=(5, 2), sticky="w")
+        ctk.CTkLabel(password_frame, text="Пароль", height=22).grid(
+            row=2, column=0, padx=8, pady=(3, 1), sticky="w"
+        )
         self.password_input = ctk.CTkEntry(password_frame, placeholder_text="Пароль", show="*")
-        self.password_input.grid(row=3, column=0, padx=10, pady=(0, 5), sticky="ew")
-        ctk.CTkLabel(password_frame, text="Повтор пароля").grid(
-            row=4, column=0, padx=10, pady=(5, 2), sticky="w"
+        self.password_input.grid(row=3, column=0, padx=8, pady=(0, 2), sticky="ew")
+        ctk.CTkLabel(password_frame, text="Повтор пароля", height=22).grid(
+            row=4, column=0, padx=8, pady=(3, 1), sticky="w"
         )
         self.repeat_password_input = ctk.CTkEntry(password_frame, placeholder_text="Повторите пароль", show="*")
-        self.repeat_password_input.grid(row=5, column=0, padx=10, pady=(0, 5), sticky="ew")
+        self.repeat_password_input.grid(row=5, column=0, padx=8, pady=(0, 2), sticky="ew")
         generator_frame = ctk.CTkFrame(password_frame, fg_color="transparent")
-        generator_frame.grid(row=6, column=0, padx=10, pady=(5, 10), sticky="ew")
+        generator_frame.grid(row=6, column=0, padx=8, pady=(2, 5), sticky="ew")
         generator_frame.grid_columnconfigure(2, weight=1)
         self.show_password_button = ctk.CTkButton(
-            generator_frame, text="Показать", width=90, command=self.toggle_create_password
+            generator_frame, text="Показать", width=82, height=30, command=self.toggle_create_password
         )
-        self.show_password_button.grid(row=0, column=0, padx=(0, 5))
+        self.show_password_button.grid(row=0, column=0, padx=(0, 3))
         self.length_password = ctk.CTkComboBox(
-            generator_frame, values=[str(i) for i in range(12, 65)], width=75
+            generator_frame,
+            values=[str(i) for i in range(MIN_GENERATED_PASSWORD_LENGTH, 65)],
+            width=70,
+            height=30,
         )
         self.length_password.set("20")
-        self.length_password.grid(row=0, column=1, padx=5)
-        ctk.CTkButton(generator_frame, text="Сгенерировать", command=self.on_generate_password).grid(
-            row=0, column=2, padx=(5, 0), sticky="ew"
+        self.length_password.grid(row=0, column=1, padx=3)
+        ctk.CTkButton(generator_frame, text="Сгенерировать", height=30, command=self.on_generate_password).grid(
+            row=0, column=2, padx=(3, 0), sticky="ew"
         )
 
         note_frame = ctk.CTkFrame(self.create_tab)
-        note_frame.grid(row=2, column=0, padx=8, pady=5, sticky="nsew")
+        note_frame.grid(row=2, column=0, padx=5, pady=3, sticky="nsew")
         note_frame.grid_columnconfigure(0, weight=1)
         note_frame.grid_rowconfigure(1, weight=1)
         ctk.CTkLabel(note_frame, text="Комментарий или заметка").grid(
-            row=0, column=0, padx=10, pady=(8, 2), sticky="w"
+            row=0, column=0, padx=8, pady=(4, 1), sticky="w"
         )
-        self.note_input_field = ctk.CTkTextbox(note_frame, border_width=1, height=90)
-        self.note_input_field.grid(row=1, column=0, padx=10, pady=(0, 10), sticky="nsew")
-        ctk.CTkButton(self.create_tab, text="Сохранить запись", command=self.save_record, height=38).grid(
-            row=3, column=0, padx=8, pady=(5, 10), sticky="ew"
+        self.note_input_field = ctk.CTkTextbox(note_frame, border_width=1, height=70)
+        self.note_input_field.grid(row=1, column=0, padx=8, pady=(0, 5), sticky="nsew")
+        ctk.CTkButton(self.create_tab, text="Сохранить запись", command=self.save_record, height=34).grid(
+            row=3, column=0, padx=5, pady=(3, 5), sticky="ew"
         )
 
     @staticmethod
     def _labeled_entry(parent, row: int, label: str, placeholder: str = ""):
-        ctk.CTkLabel(parent, text=label).grid(row=row, column=0, padx=10, pady=(7, 2), sticky="w")
-        entry = ctk.CTkEntry(parent, placeholder_text=placeholder)
-        entry.grid(row=row + 1, column=0, padx=10, pady=(0, 5), sticky="ew")
+        ctk.CTkLabel(parent, text=label, height=22).grid(row=row, column=0, padx=8, pady=(3, 1), sticky="w")
+        entry = ctk.CTkEntry(parent, placeholder_text=placeholder, height=30)
+        entry.grid(row=row + 1, column=0, padx=8, pady=(0, 2), sticky="ew")
         return entry
 
     def _create_settings_tab(self) -> None:
         self.settings_tab.grid_columnconfigure(0, weight=1)
         panel = ctk.CTkFrame(self.settings_tab)
-        panel.grid(row=0, column=0, padx=12, pady=12, sticky="new")
+        panel.grid(row=0, column=0, padx=8, pady=8, sticky="new")
         panel.grid_columnconfigure(0, weight=1)
         panel.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(panel, text="Оформление").grid(row=0, column=0, padx=12, pady=10, sticky="w")
+        ctk.CTkLabel(panel, text="Оформление").grid(row=0, column=0, padx=10, pady=6, sticky="w")
         self.change_theme_switch = ctk.CTkSwitch(
             panel, text="Тёмная тема", command=self.change_theme, onvalue="Dark", offvalue="Light"
         )
-        self.change_theme_switch.grid(row=0, column=1, padx=12, pady=10, sticky="w")
+        self.change_theme_switch.grid(row=0, column=1, padx=10, pady=6, sticky="w")
         if self.password_manager_app.settings["theme"] == "Dark":
             self.change_theme_switch.select()
 
-        ctk.CTkLabel(panel, text="Автоблокировка").grid(row=1, column=0, padx=12, pady=10, sticky="w")
+        ctk.CTkLabel(panel, text="Автоблокировка").grid(row=1, column=0, padx=10, pady=6, sticky="w")
         self.auto_lock_combo = ctk.CTkComboBox(
             panel, values=["1", "5", "10", "15", "30"], command=self.change_auto_lock, width=120
         )
         self.auto_lock_combo.set(str(self.password_manager_app.settings["auto_lock_minutes"]))
-        self.auto_lock_combo.grid(row=1, column=1, padx=12, pady=10, sticky="w")
+        self.auto_lock_combo.grid(row=1, column=1, padx=10, pady=6, sticky="w")
         ctk.CTkLabel(panel, text="минут бездействия", text_color="gray60").grid(
-            row=1, column=1, padx=(145, 12), pady=10, sticky="w"
+            row=1, column=1, padx=(143, 10), pady=6, sticky="w"
         )
 
         ctk.CTkButton(panel, text="Импортировать CSV", command=self.import_csv).grid(
-            row=2, column=0, columnspan=2, padx=12, pady=6, sticky="ew"
+            row=2, column=0, columnspan=2, padx=10, pady=3, sticky="ew"
         )
         ctk.CTkButton(panel, text="Сохранить зашифрованную копию", command=self.export_backup).grid(
-            row=3, column=0, columnspan=2, padx=12, pady=6, sticky="ew"
+            row=3, column=0, columnspan=2, padx=10, pady=3, sticky="ew"
         )
         ctk.CTkButton(panel, text="Восстановить зашифрованную копию", command=self.restore_backup).grid(
-            row=4, column=0, columnspan=2, padx=12, pady=6, sticky="ew"
+            row=4, column=0, columnspan=2, padx=10, pady=3, sticky="ew"
         )
         ctk.CTkButton(panel, text="Сменить мастер-пароль", command=self.change_master_password).grid(
-            row=5, column=0, columnspan=2, padx=12, pady=6, sticky="ew"
+            row=5, column=0, columnspan=2, padx=10, pady=3, sticky="ew"
         )
         ctk.CTkButton(panel, text="Поддерживаемые CSV", command=self.show_csv_help).grid(
-            row=6, column=0, columnspan=2, padx=12, pady=6, sticky="ew"
+            row=6, column=0, columnspan=2, padx=10, pady=3, sticky="ew"
         )
         ctk.CTkButton(panel, text="Заблокировать сейчас", command=self.lock_now).grid(
-            row=7, column=0, columnspan=2, padx=12, pady=6, sticky="ew"
+            row=7, column=0, columnspan=2, padx=10, pady=3, sticky="ew"
         )
         ctk.CTkLabel(
             panel,
             text=f"Данные: {self.password_manager_app.data_dir}",
             wraplength=480,
             text_color="gray60",
-        ).grid(row=8, column=0, columnspan=2, padx=12, pady=(12, 10), sticky="w")
+        ).grid(row=8, column=0, columnspan=2, padx=10, pady=(8, 6), sticky="w")
 
     def refresh_records(self) -> None:
         if self.password_manager_app.is_locked or not hasattr(self, "records_field"):
@@ -372,26 +389,26 @@ class Ui(ctk.CTk):
                 self.records_field,
                 text=f"Показать ещё  ·  {end} из {len(self._record_results)}",
                 command=self._append_record_batch,
-                height=34,
-                fg_color="transparent",
+                height=30,
                 border_width=1,
+                **OUTLINE_BUTTON_STYLE,
             )
-            self._load_more_button.grid(row=end, column=0, padx=3, pady=8, sticky="ew")
+            self._load_more_button.grid(row=end, column=0, padx=2, pady=5, sticky="ew")
 
     def _create_record_card(self, row: int, record: PasswordRecord) -> None:
         card = ctk.CTkFrame(self.records_field, border_width=1)
-        card.grid(row=row, column=0, padx=3, pady=3, sticky="ew")
+        card.grid(row=row, column=0, padx=2, pady=2, sticky="ew")
         card.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(card, text=record.record_name, font=self._record_name_font).grid(
-            row=0, column=0, padx=12, pady=(8, 0), sticky="w"
+        ctk.CTkLabel(card, text=record.record_name, font=self._record_name_font, height=22).grid(
+            row=0, column=0, padx=10, pady=(5, 0), sticky="w"
         )
         details = "  •  ".join(value for value in (record.service_name, record.login) if value)
-        ctk.CTkLabel(card, text=details or "Поля не заполнены", text_color="gray60").grid(
-            row=1, column=0, padx=12, pady=(1, 5), sticky="w"
+        ctk.CTkLabel(card, text=details or "Поля не заполнены", text_color="gray60", height=22).grid(
+            row=1, column=0, padx=10, pady=(0, 3), sticky="w"
         )
 
         actions = ctk.CTkFrame(card, fg_color="transparent")
-        actions.grid(row=2, column=0, padx=10, pady=(0, 8), sticky="ew")
+        actions.grid(row=2, column=0, padx=8, pady=(0, 5), sticky="ew")
         for column in range(3):
             actions.grid_columnconfigure(column, weight=1, uniform="record-actions")
         ctk.CTkButton(
@@ -401,8 +418,8 @@ class Ui(ctk.CTk):
             state="normal" if record.login else "disabled",
             height=28,
             font=self._record_action_font,
-            fg_color="transparent",
             border_width=1,
+            **OUTLINE_BUTTON_STYLE,
         ).grid(row=0, column=0, padx=(0, 3), sticky="ew")
         ctk.CTkButton(
             actions,
@@ -411,8 +428,8 @@ class Ui(ctk.CTk):
             state="normal" if record.password else "disabled",
             height=28,
             font=self._record_action_font,
-            fg_color="transparent",
             border_width=1,
+            **OUTLINE_BUTTON_STYLE,
         ).grid(row=0, column=1, padx=3, sticky="ew")
         ctk.CTkButton(
             actions,
