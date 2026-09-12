@@ -327,16 +327,11 @@ class PasswordManagerApp:
         service_name = service_name.strip()
         login = login.strip()
         url_link_service = PasswordManagerApp._normalize_web_url(url_link_service)
-        if not record_name:
-            raise ValidationError("Укажите имя записи")
-        if not service_name:
-            raise ValidationError("Укажите сервис")
-        if not login:
-            raise ValidationError("Укажите логин")
-        if not password:
-            raise ValidationError("Пароль не может быть пустым")
         if password != repeat_password:
             raise ValidationError("Пароли не совпадают")
+        site_name = urlparse(url_link_service).hostname if url_link_service else ""
+        record_name = record_name or site_name or login or "Без названия"
+        service_name = service_name or record_name
         return record_name, service_name, login, url_link_service
 
     @staticmethod

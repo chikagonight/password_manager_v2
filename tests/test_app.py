@@ -71,6 +71,29 @@ class PasswordManagerAppTests(unittest.TestCase):
             self.app.save_record("", "Service", "login", "one", "two")
         self.assertEqual([original.id], [item.id for item in self.app.get_records()])
 
+    def test_all_record_fields_may_be_empty(self):
+        self.create_vault()
+
+        record = self.app.save_record("", "", "", "", "", "", "")
+
+        self.assertEqual("Без названия", record.record_name)
+        self.assertEqual("Без названия", record.service_name)
+        self.assertEqual("", record.login)
+        self.assertEqual("", record.password)
+
+    def test_empty_name_falls_back_to_site_then_login(self):
+        self.create_vault()
+
+        site_record = self.app.save_record(
+            "", "", "fallback-login", "", "", "sub.example.test/path", ""
+        )
+        login_record = self.app.save_record("", "Explicit service", "only-login", "", "", "", "")
+
+        self.assertEqual("sub.example.test", site_record.record_name)
+        self.assertEqual("sub.example.test", site_record.service_name)
+        self.assertEqual("only-login", login_record.record_name)
+        self.assertEqual("Explicit service", login_record.service_name)
+
     def test_url_rejects_unsafe_schemes(self):
         self.create_vault()
         for url in ("javascript:alert(1)", "data:text/plain,bad", "file:///tmp/secret", "ftp://example.test"):
@@ -138,6 +161,20 @@ class PasswordManagerAppTests(unittest.TestCase):
         with self.assertRaises(ImportRecordsError):
             self.app.import_records_from_csv(invalid_csv)
         self.assertEqual(before, [record.id for record in self.app.get_records()])
+
+    def test_csv_row_with_empty_cells_is_imported(self):
+        self.create_vault()
+        path = self.directory / "empty-values.csv"
+        self._write_csv(
+            path,
+            [{"name": "", "username": "", "password": "", "url": "", "note": ""}],
+        )
+
+        self.assertEqual(1, self.app.import_records_from_csv(path))
+        record = self.app.get_records()[0]
+        self.assertEqual("Без названия", record.record_name)
+        self.assertEqual("", record.login)
+        self.assertEqual("", record.password)
 
     def test_legacy_migration_creates_encrypted_backup_then_removes_plaintext(self):
         self.legacy_path.parent.mkdir(parents=True)

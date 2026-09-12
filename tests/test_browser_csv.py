@@ -88,6 +88,30 @@ class BrowserCsvTests(unittest.TestCase):
         with self.assertRaises(BrowserCsvError):
             read_browser_csv(path)
 
+    def test_empty_cells_are_preserved_with_display_name_fallback(self):
+        path = self.directory / "empty.csv"
+        path.write_text("name,url,username,password,note\n,,,,\n", encoding="utf-8")
+
+        data = read_browser_csv(path)
+
+        self.assertEqual("Без названия", data.rows[0]["record_name"])
+        self.assertEqual("", data.rows[0]["login"])
+        self.assertEqual("", data.rows[0]["password"])
+
+    def test_name_falls_back_to_site_before_login(self):
+        path = self.directory / "fallback.csv"
+        path.write_text(
+            "name,url,username,password,note\n"
+            ",portal.example.test/path,site-login,,\n"
+            ",,login-only,,\n",
+            encoding="utf-8",
+        )
+
+        data = read_browser_csv(path)
+
+        self.assertEqual("portal.example.test", data.rows[0]["record_name"])
+        self.assertEqual("login-only", data.rows[1]["record_name"])
+
 
 if __name__ == "__main__":
     unittest.main()

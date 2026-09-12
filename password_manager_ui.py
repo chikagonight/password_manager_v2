@@ -197,8 +197,8 @@ class Ui(ctk.CTk):
         basic_frame = ctk.CTkFrame(self.create_tab)
         basic_frame.grid(row=0, column=0, padx=8, pady=(10, 5), sticky="ew")
         basic_frame.grid_columnconfigure(0, weight=1)
-        self.name_record_field = self._labeled_entry(basic_frame, 0, "Имя записи *")
-        self.name_service_field = self._labeled_entry(basic_frame, 2, "Сервис *")
+        self.name_record_field = self._labeled_entry(basic_frame, 0, "Имя записи")
+        self.name_service_field = self._labeled_entry(basic_frame, 2, "Сервис")
         self.url_input_field = self._labeled_entry(
             basic_frame, 4, "Сайт", "example.com — https:// добавится автоматически"
         )
@@ -206,11 +206,11 @@ class Ui(ctk.CTk):
         password_frame = ctk.CTkFrame(self.create_tab)
         password_frame.grid(row=1, column=0, padx=8, pady=5, sticky="ew")
         password_frame.grid_columnconfigure(0, weight=1)
-        self.login_input = self._labeled_entry(password_frame, 0, "Логин *")
-        ctk.CTkLabel(password_frame, text="Пароль *").grid(row=2, column=0, padx=10, pady=(5, 2), sticky="w")
+        self.login_input = self._labeled_entry(password_frame, 0, "Логин")
+        ctk.CTkLabel(password_frame, text="Пароль").grid(row=2, column=0, padx=10, pady=(5, 2), sticky="w")
         self.password_input = ctk.CTkEntry(password_frame, placeholder_text="Пароль", show="*")
         self.password_input.grid(row=3, column=0, padx=10, pady=(0, 5), sticky="ew")
-        ctk.CTkLabel(password_frame, text="Повтор пароля *").grid(
+        ctk.CTkLabel(password_frame, text="Повтор пароля").grid(
             row=4, column=0, padx=10, pady=(5, 2), sticky="w"
         )
         self.repeat_password_input = ctk.CTkEntry(password_frame, placeholder_text="Повторите пароль", show="*")
@@ -321,7 +321,8 @@ class Ui(ctk.CTk):
             ctk.CTkLabel(card, text=record.record_name, font=ctk.CTkFont(size=16, weight="bold")).grid(
                 row=0, column=0, padx=12, pady=(8, 0), sticky="w"
             )
-            ctk.CTkLabel(card, text=f"{record.service_name}  •  {record.login}", text_color="gray60").grid(
+            details = "  •  ".join(value for value in (record.service_name, record.login) if value)
+            ctk.CTkLabel(card, text=details or "Поля не заполнены", text_color="gray60").grid(
                 row=1, column=0, padx=12, pady=(1, 8), sticky="w"
             )
             ctk.CTkButton(card, text="Открыть", width=100, command=lambda item=record: self.open_record(item)).grid(

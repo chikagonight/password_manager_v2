@@ -67,7 +67,7 @@ def read_browser_csv(path: Path, progress_callback: ProgressCallback | None = No
 
     source_format = _detect_source(normalized_headers)
     output: list[dict[str, str]] = []
-    for number, raw_row in enumerate(reader, start=1):
+    for raw_row in reader:
         row = {
             _normalize_header(str(key)): str(value or "").strip()
             for key, value in raw_row.items()
@@ -75,8 +75,9 @@ def read_browser_csv(path: Path, progress_callback: ProgressCallback | None = No
         }
         url = _first_value(row, URL_KEYS)
         realm = _first_value(row, REALM_KEYS)
-        parsed_url = urlparse(url)
-        fallback_name = realm or parsed_url.hostname or f"Импортированная запись {number}"
+        login = _first_value(row, LOGIN_KEYS)
+        parsed_url = urlparse(url if "://" in url else f"https://{url}")
+        fallback_name = realm or parsed_url.hostname or login or "Без названия"
         name = _first_value(row, NAME_KEYS) or fallback_name
         note = _first_value(row, NOTE_KEYS)
         otp = _first_value(row, OTP_KEYS)
@@ -93,7 +94,7 @@ def read_browser_csv(path: Path, progress_callback: ProgressCallback | None = No
             {
                 "record_name": name,
                 "service_name": name,
-                "login": _first_value(row, LOGIN_KEYS) or "Не указан",
+                "login": login,
                 "password": _first_value(row, PASSWORD_KEYS),
                 "url_link_service": url,
                 "note": note,
