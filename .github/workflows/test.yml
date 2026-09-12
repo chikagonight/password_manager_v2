@@ -20,4 +20,4 @@ jobs:
       - name: Test
         run: python -m unittest discover -s tests -v
       - name: Build
-        run: python -m PyInstaller --noconfirm --clean --windowed --name PasswordManagerV2 --collect-all customtkinter password_manager_app.py
+        run: .\build.ps1

@@ -4,8 +4,9 @@ import os
 import sys
 from pathlib import Path
 
-APP_NAME = "PasswordManagerV2"
-APP_TITLE = "Password Manager"
+APP_NAME = "passwordSafe"
+APP_TITLE = "passwordSafe"
+LEGACY_APP_NAME = "PasswordManagerV2"
 VAULT_FORMAT = "password-manager-vault"
 VAULT_VERSION = 1
 RECORDS_SCHEMA_VERSION = 1
@@ -15,16 +16,26 @@ MIN_MASTER_PASSWORD_LENGTH = 8
 def default_data_dir() -> Path:
     """Return a stable per-user data directory."""
 
-    override = os.environ.get("PASSWORD_MANAGER_DATA_DIR")
+    override = os.environ.get("PASSWORD_SAFE_DATA_DIR") or os.environ.get("PASSWORD_MANAGER_DATA_DIR")
     if override:
         return Path(override).expanduser().resolve()
 
     if os.name == "nt":
         base = os.environ.get("APPDATA") or os.environ.get("LOCALAPPDATA")
         if base:
-            return Path(base) / APP_NAME
+            return select_windows_data_dir(Path(base))
 
     return Path.home() / ".local" / "share" / APP_NAME
+
+
+def select_windows_data_dir(base: Path) -> Path:
+    """Prefer the renamed location, while keeping an existing legacy vault accessible."""
+
+    current = Path(base) / APP_NAME
+    legacy = Path(base) / LEGACY_APP_NAME
+    if not (current / "vault.pm2").is_file() and (legacy / "vault.pm2").is_file():
+        return legacy
+    return current
 
 
 def application_dir() -> Path:

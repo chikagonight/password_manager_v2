@@ -651,7 +651,7 @@ class Ui(ctk.CTk):
             parent=self,
             title="Зашифрованная резервная копия",
             defaultextension=".pm2",
-            filetypes=[("Password Manager vault", "*.pm2"), ("Все файлы", "*.*")],
+            filetypes=[("passwordSafe vault", "*.pm2"), ("Все файлы", "*.*")],
         )
         if not path:
             return
@@ -666,7 +666,7 @@ class Ui(ctk.CTk):
         path = filedialog.askopenfilename(
             parent=self,
             title="Восстановить резервную копию",
-            filetypes=[("Password Manager vault", "*.pm2"), ("Все файлы", "*.*")],
+            filetypes=[("passwordSafe vault", "*.pm2"), ("Все файлы", "*.*")],
         )
         if not path:
             return

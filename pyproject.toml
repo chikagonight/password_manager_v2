@@ -3,9 +3,9 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "password-manager-v2"
+name = "password-safe"
 version = "1.0.0"
-description = "Local encrypted desktop password manager"
+description = "passwordSafe local encrypted desktop password manager"
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
 dependencies = [
@@ -21,11 +21,12 @@ dev = [
 ]
 
 [project.gui-scripts]
-password-manager = "password_manager_app:main"
+password-safe = "password_manager_app:main"
 
 [tool.setuptools]
 py-modules = [
     "constants",
+    "install_password_safe",
     "models",
     "password_manager_app",
     "password_manager_ui",

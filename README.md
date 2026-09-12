@@ -1,4 +1,4 @@
-# Password Manager V2
+# passwordSafe
 
 Локальный менеджер паролей для Windows с зашифрованным хранилищем, мастер-паролем,
 автоблокировкой и резервными копиями.
@@ -63,14 +63,19 @@ DPI. На дополнительном экране текст может выг
 По умолчанию на Windows:
 
 ```text
-%APPDATA%\PasswordManagerV2\vault.pm2
-%APPDATA%\PasswordManagerV2\vault.pm2.bak
-%APPDATA%\PasswordManagerV2\vault.pm2.pre-restore.bak
-%APPDATA%\PasswordManagerV2\settings.json
+%APPDATA%\passwordSafe\vault.pm2
+%APPDATA%\passwordSafe\vault.pm2.bak
+%APPDATA%\passwordSafe\vault.pm2.pre-restore.bak
+%APPDATA%\passwordSafe\settings.json
 ```
 
 Для portable-размещения или тестов каталог можно задать переменной окружения
-`PASSWORD_MANAGER_DATA_DIR` до запуска приложения.
+`PASSWORD_SAFE_DATA_DIR` до запуска приложения. Старое имя переменной
+`PASSWORD_MANAGER_DATA_DIR` также поддерживается.
+
+Если приложение обнаружит существующий vault в `%APPDATA%\PasswordManagerV2`, а в новой
+папке vault ещё нет, оно автоматически продолжит использовать прежнюю папку. Благодаря
+этому обновление до `passwordSafe` не требует переноса и повторного импорта данных.
 
 `vault.pm2.bak` содержит предыдущее зашифрованное состояние. Дополнительные копии можно
 создать на вкладке «Настройки».
@@ -147,8 +152,14 @@ name,url,username,password,note
 Результат:
 
 ```text
-dist\PasswordManagerV2\PasswordManagerV2.exe
+dist\passwordSafe\passwordSafe.exe
+dist\passwordSafe-Setup.exe
 ```
+
+Запустите `passwordSafe-Setup.exe`, выберите любую доступную для записи папку и нажмите
+«Установить». По умолчанию предлагается `%LOCALAPPDATA%\Programs\passwordSafe`.
+Установщик можно повторно запустить для обновления уже выбранной папки. Он копирует туда
+готовое приложение и не переносит и не удаляет хранилище паролей.
 
 ## Ограничения безопасности
 
@@ -165,6 +176,6 @@ dist\PasswordManagerV2\PasswordManagerV2.exe
 - [ ] Проверить создание vault, перезапуск и разблокировку.
 - [ ] Проверить миграцию на копии реального legacy-файла.
 - [ ] Проверить восстановление основной и внешней резервной копии.
-- [ ] Убедиться, что пароль не встречается в файлах `%APPDATA%\PasswordManagerV2`.
+- [ ] Убедиться, что пароль не встречается в файлах `%APPDATA%\passwordSafe` и в совместимой старой папке.
 - [ ] Запустить тесты, Ruff и PyInstaller-сборку.
 - [ ] Проверить собранный EXE антивирусом и подписать релиз при наличии сертификата.
