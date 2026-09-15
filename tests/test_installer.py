@@ -23,7 +23,7 @@ class InstallerTests(unittest.TestCase):
 
         executable = install_payload(self.payload, destination)
 
-        self.assertEqual(destination / EXECUTABLE_NAME, executable)
+        self.assertTrue(executable.samefile(destination / EXECUTABLE_NAME))
         self.assertEqual(b"exe-v1", executable.read_bytes())
         self.assertEqual(b"library", (destination / "_internal" / "library.dat").read_bytes())
 
