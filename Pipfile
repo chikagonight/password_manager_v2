@@ -4,9 +4,12 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-customtkinter = "*"
+customtkinter = "==5.2.2"
+cryptography = "==50.0.1"
 
 [dev-packages]
+pyinstaller = "*"
+ruff = "*"
 
 [requires]
 python_version = "3.14"

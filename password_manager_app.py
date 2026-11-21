@@ -1,86 +1,89 @@
-import os.path
-import time
-from constants import RECORDS_FILE
-from utils.records_file_tools import SaverRecordsInFile
-from utils.file_tools import FileTools
-from utils.settings_tools import SettingsTools
+"""Desktop entry point and composition root."""
+
+from __future__ import annotations
+
+import logging
+import os
+import webbrowser
+from collections.abc import Callable
+from pathlib import Path
+
+from constants import APP_DATA_DIR, LEGACY_RECORDS_FILE, SETTINGS_FILE, VAULT_BACKUP_FILE, VAULT_FILE
+from password_safe.application import PasswordSafe
+from password_safe.ports import CsvImportData, PasswordClipboard, ProgressCallback
+from password_safe.ports import ImportRecordsError as ImportRecordsError
+from password_safe.ports import ValidationError as ValidationError
+from utils.browser_csv import BrowserCsvError, read_browser_csv
+from utils.legacy_records import LegacyJsonRecords
 from utils.password_tools import PasswordGenerator
-from utils.logger_tools import Logger
-from password_manager_ui import Ui
-from record_window import RecordWindow
+from utils.settings_tools import SettingsTools
+from utils.vault_store import VaultStore
 
 
-class PasswordManagerApp:
-    def __init__(self):
-        self.file_tools = FileTools()
-        self.records_file_tools = SaverRecordsInFile()
-        self.settings_tools = SettingsTools()
-        self.password_generator = PasswordGenerator()
-        self.logger_tools = Logger()
-        self.record_window = None
-        self.create_records_cards = None
-        if not self.file_tools.check_file_exist(RECORDS_FILE):
-            self.logger_tools.log(f"Файл {RECORDS_FILE} не найден")
-            self.file_tools.create_json_file(RECORDS_FILE)
-            self.logger_tools.log(f"Создан новый {RECORDS_FILE}")
-            time.sleep(1)
-        self.id_arr = self.records_file_tools.load_ids()
-        self.appearance_mode = self.settings_tools.load()
-
-    def save_record(self, record_name, service_name, login, password, repeat_password, url_link_service, note):
-        records_file = RECORDS_FILE
-        if password == repeat_password:
-            record = self.records_file_tools.get_record_object(record_name, service_name, login, password,
-                                                               url_link_service, note)
-            if self.file_tools.check_file_exist(records_file):
-                if self.file_tools.check_file_empty(records_file):
-                    self.records_file_tools.create_records_file(record, records_file)
-                else:
-                    self.records_file_tools.append_new_record(record, records_file)
-            else:
-                self.records_file_tools.create_records_file(record, records_file)
-
-    def delete_record(self, id):
-        record_file = self.records_file_tools.delete_record(id)
-        self.file_tools.write_to_json_file(record_file, RECORDS_FILE)
-        self.create_records_cards()
-        self.record_window.destroy()
-
-    def get_records(self, file) -> list:
-        return self.records_file_tools.load(file)
-
-    def password_generate(self, length_password) -> str:
-        return self.password_generator.generate(length_password)
-
-    def load_settings(self):
-        return self.settings_tools.load()
-
-    def save_settings(self, key, file_config, new_value, file):
-        return self.settings_tools.save(key, file_config, new_value, file)
-
-    def log_event(self, message: str):
-        self.logger_tools.log(message)
-
-    def open_window_record(self, parent, record):
-        if self.record_window and self.record_window.winfo_exists():
-            self.record_window.destroy()
-        self.record_window = RecordWindow(parent = parent, record = record, password_manager_app = self)
-
-    def import_records_from_csv(self, path_to_file):
-        path_to_file = os.path.normpath(path_to_file)
-        for row in self.file_tools.parse_csv_file(path_to_file):
-            record = self.records_file_tools.get_record_object(
-                record_name = row["name"],
-                service_name = row["name"],
-                login = row["username"],
-                password = row["password"],
-                url_link_service = row["url"],
-                note = row["note"])
-            self.records_file_tools.append_new_record(record, RECORDS_FILE)
-            self.create_records_cards()
+def _read_csv(path: Path, progress: ProgressCallback | None) -> CsvImportData:
+    try:
+        data = read_browser_csv(path, progress)
+    except BrowserCsvError as exc:
+        raise ImportRecordsError(str(exc)) from None
+    return CsvImportData(data.source_format, data.rows)
 
 
-if __name__ == '__main__':
-    password_manager_app = PasswordManagerApp()
-    app = Ui(password_manager_app)
-    app.mainloop()
+def _open_browser(url: str) -> None:
+    try:
+        opened = webbrowser.open(url, new=2)
+    except (OSError, webbrowser.Error):
+        opened = False
+    if not opened:
+        raise ValidationError("Не удалось открыть браузер")
+
+
+class PasswordManagerApp(PasswordSafe):
+    """Build the desktop configuration; keep the original entry point importable."""
+
+    def __init__(
+        self, *, data_dir: Path = APP_DATA_DIR, legacy_records_path: Path | None = None,
+        browser: Callable[[str], None] = _open_browser,
+    ):
+        self.data_dir = Path(data_dir)
+        legacy_path = LEGACY_RECORDS_FILE if legacy_records_path is None else Path(legacy_records_path)
+        candidates = (Path.cwd() / "records.json", legacy_path) if legacy_records_path is None else (legacy_path,)
+        self.store = VaultStore(self.data_dir / VAULT_FILE.name, self.data_dir / VAULT_BACKUP_FILE.name)
+        super().__init__(
+            vault=self.store,
+            settings=SettingsTools(self.data_dir / SETTINGS_FILE.name, legacy_path.with_name("settings.json")),
+            legacy=LegacyJsonRecords(candidates),
+            migration_backup=self.data_dir / "backups" / "legacy-migration.pm2",
+            csv_reader=_read_csv,
+            browser=browser,
+            generator=PasswordGenerator().generate,
+        )
+
+
+def main() -> None:
+    from tkinter import TclError, messagebox
+
+    from password_manager_ui import Ui
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    try:
+        app = PasswordManagerApp()
+    except OSError:
+        messagebox.showerror("passwordSafe", "Не удалось прочитать настройки. Проверьте доступ к каталогу данных.")
+        return
+    def clipboard_factory(window: Ui) -> PasswordClipboard:
+        if os.name == "nt":
+            from utils.secure_clipboard import WindowsClipboard
+
+            try:
+                return WindowsClipboard(window.winfo_id())
+            except TclError:
+                raise OSError("Не удалось получить дескриптор окна") from None
+        from utils.tk_clipboard import TkClipboard
+
+        return TkClipboard(window)
+
+    Ui(app, data_dir=app.data_dir, clipboard_factory=clipboard_factory).mainloop()
+
+
+if __name__ == "__main__":
+    main()

@@ -5,3 +5,12 @@ __pycache__/
 utils/__pycache__/
 records.json
 settings.json
+build/
+dist/
+*.spec
+*.egg-info/
+.ruff_cache/
+.coverage
+htmlcov/
+*.pm2
+*.pm2.bak
