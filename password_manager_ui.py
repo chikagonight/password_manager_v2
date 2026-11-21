@@ -18,6 +18,8 @@ from password_safe.domain import (
     MIN_MASTER_PASSWORD_LENGTH,
 )
 from password_safe.ports import ImportRecordsError, MigrationIncomplete, PasswordClipboard, ValidationError, VaultError
+from password_safe.updates import SETUP_FILENAME, Release, UpdateError
+from password_safe.version import APP_VERSION
 from record_window import RecordWindow
 from ui_compat import configure_stable_windows_dpi
 from utils.tk_clipboard import protect_password_entry
@@ -39,15 +41,19 @@ class Ui(ctk.CTk):
     def __init__(
         self, password_manager_app: PasswordSafe, *, data_dir: Path | None = None,
         clipboard_factory: Callable[[Ui], PasswordClipboard] | None = None,
+        check_updates: Callable[[], Release | None] | None = None,
+        releases_url: str = "",
     ):
         self.password_manager_app = password_manager_app
         self._data_dir = data_dir
         self._clipboard_factory = clipboard_factory
+        self._check_updates = check_updates
+        self._releases_url = releases_url
         ctk.set_default_color_theme("dark-blue")
         ctk.set_appearance_mode(str(self.password_manager_app.settings["theme"]))
         super().__init__()
 
-        self.title(f"{APP_TITLE} 1.0")
+        self.title(f"{APP_TITLE} {APP_VERSION}")
         self.geometry("600x760")
         self.minsize(520, 620)
         self.grid_columnconfigure(0, weight=1)
@@ -64,6 +70,8 @@ class Ui(ctk.CTk):
         self._import_running = False
         self._import_poll_job: str | None = None
         self._import_queue: queue.Queue[tuple] = queue.Queue()
+        self._update_poll_job: str | None = None
+        self._update_button: ctk.CTkButton | None = None
         self.import_dialog: ctk.CTkToplevel | None = None
         self.record_window: RecordWindow | None = None
         self._legacy_source: Path | None = None
@@ -373,10 +381,69 @@ class Ui(ctk.CTk):
         ctk.CTkButton(panel, text="Завершить миграцию", command=self.finish_legacy_migration).grid(
             row=8, column=0, columnspan=2, padx=10, pady=3, sticky="ew"
         )
+        if self._check_updates is not None:
+            button = ctk.CTkButton(
+                panel, text="Проверить обновления", command=self._start_update_check,
+            )
+            button.grid(row=9, column=0, columnspan=2, padx=10, pady=3, sticky="ew")
+            if self._update_poll_job is not None:
+                button.configure(state="disabled", text="Проверка…")
+            self._update_button = button
         if self._data_dir is not None:
             ctk.CTkLabel(
                 panel, text=f"Данные: {self._data_dir}", wraplength=480, text_color="gray60",
-            ).grid(row=9, column=0, columnspan=2, padx=10, pady=(8, 6), sticky="w")
+            ).grid(row=10, column=0, columnspan=2, padx=10, pady=(8, 6), sticky="w")
+
+    def _start_update_check(self) -> None:
+        check_updates = self._check_updates
+        if check_updates is None or self._update_button is None or self._update_poll_job is not None:
+            return
+        self._update_button.configure(state="disabled", text="Проверка…")
+        results: queue.Queue[Release | UpdateError | None] = queue.Queue()
+
+        def worker() -> None:
+            try:
+                results.put(check_updates())
+            except UpdateError as exc:
+                results.put(exc)
+            except Exception:
+                results.put(UpdateError("Не удалось проверить обновления."))
+
+        threading.Thread(target=worker, name="release-check", daemon=True).start()
+        self._update_poll_job = self.after(75, self._poll_update_check, results)
+
+    def _poll_update_check(self, results: queue.Queue[Release | UpdateError | None]) -> None:
+        try:
+            result = results.get_nowait()
+        except queue.Empty:
+            self._update_poll_job = self.after(75, self._poll_update_check, results)
+            return
+        self._update_poll_job = None
+        if self._update_button is not None:
+            self._update_button.configure(state="normal", text="Проверить обновления")
+        if self.password_manager_app.is_locked or self._import_running:
+            return
+
+        title = "Обновления"
+        if result is None:
+            messagebox.showinfo(title, f"Установлена актуальная версия: {APP_VERSION}.", parent=self)
+            return
+        if isinstance(result, UpdateError):
+            url = self._releases_url
+            text = f"{result}\n\nОткрыть список релизов в браузере?"
+        else:
+            url = result.page_url
+            text = (
+                f"Доступна версия {result.tag}. У вас установлена {APP_VERSION}.\n\n"
+                f"Скачайте {SETUP_FILENAME} со страницы релиза, закройте passwordSafe "
+                "и запустите установщик. При установке выберите текущую папку приложения.\n\n"
+                "Открыть страницу релиза в браузере?"
+            )
+        if url and messagebox.askyesno(title, text, parent=self):
+            try:
+                self.password_manager_app.open_url(url)
+            except ValidationError as exc:
+                messagebox.showerror(title, str(exc), parent=self)
 
     def refresh_records(self) -> None:
         if self.password_manager_app.is_locked or not hasattr(self, "records_field"):
@@ -851,6 +918,7 @@ class Ui(ctk.CTk):
         self.record_window = None
 
     def _clear_root(self) -> None:
+        self._update_button = None
         for child in self.winfo_children():
             child.destroy()
 
