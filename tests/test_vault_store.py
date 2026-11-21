@@ -34,7 +34,8 @@ def make_record(password: str = "Secret-Marker-8391") -> PasswordRecord:
 class VaultStoreTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.directory = Path(self.temp_dir.name)
+        # Match the store's canonical paths when injecting destination-specific failures.
+        self.directory = Path(self.temp_dir.name).resolve()
         self.path = self.directory / "vault.pm2"
         self.backup = self.directory / "vault.pm2.bak"
 

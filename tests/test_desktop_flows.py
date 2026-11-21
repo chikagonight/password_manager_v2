@@ -14,7 +14,7 @@ from utils.vault_store import VaultStore
 @unittest.skipUnless(os.environ.get("PASSWORD_SAFE_GUI_SMOKE") == "1", "requires a desktop display")
 class DesktopRecoveryTests(unittest.TestCase):
     def setUp(self):
-        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
         self.app = PasswordManagerApp(data_dir=directory, legacy_records_path=directory / "records.json")
         backup = VaultStore(self.app.store.backup_path)
         backup.create(MASTER_PASSWORD, [make_record()])

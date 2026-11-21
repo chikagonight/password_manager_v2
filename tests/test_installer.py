@@ -10,7 +10,8 @@ from install_password_safe import EXECUTABLE_NAME, InstallerError, install_paylo
 class InstallerTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.directory = Path(self.temp_dir.name)
+        # The runner may give TEMP an 8.3 alias; the installer resolves the destination.
+        self.directory = Path(self.temp_dir.name).resolve()
         self.payload = self.directory / "payload"
         (self.payload / "_internal").mkdir(parents=True)
         (self.payload / EXECUTABLE_NAME).write_bytes(b"exe-v1")
