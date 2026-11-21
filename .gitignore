@@ -12,5 +12,14 @@ dist/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Локальные секреты и хранилища
+.env
+.env.*
+!.env.example
 *.pm2
-*.pm2.bak
+*.pm2.*
+
+# CSV-экспорты паролей; тестовые CSV храним отдельно
+/exports/
+browser_passwords.csv
