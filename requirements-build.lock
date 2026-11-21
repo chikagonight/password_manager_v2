@@ -1,0 +1,18 @@
+# Единый набор для Windows CPython 3.14: приложение, сборка, backend и проверки CI.
+# Транзитивные зависимости включены; обновлять и проверять набор целиком.
+# build.ps1 устанавливает проект отдельно с --no-deps --no-build-isolation.
+altgraph==0.17.5
+cffi==2.1.1
+cryptography==50.0.1
+customtkinter==5.2.2
+darkdetect==0.8.0
+packaging==26.3
+pefile==2024.8.26 ; sys_platform == 'win32'
+pip==25.3
+pycparser==3.12
+pyinstaller==6.22.2
+pyinstaller-hooks-contrib==2026.10
+pywin32-ctypes==0.2.3 ; sys_platform == 'win32'
+ruff==0.16.7
+setuptools==80.9.0
+wheel==0.45.1

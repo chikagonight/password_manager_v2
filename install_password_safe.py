@@ -4,15 +4,17 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from constants import APP_NAME
+from constants import APP_NAME, LEGACY_APP_NAME, default_data_dir
 
 EXECUTABLE_NAME = f"{APP_NAME}.exe"
 INSTALL_MARKER = ".passwordSafe-install"
 INVALID_WINDOWS_PATH_CHARACTERS = frozenset('<>:"|?*')
+USER_DATA_NAMES = ("vault.pm2", "vault.pm2.bak", "vault.pm2.pre-restore.bak", "records.json", "settings.json", "backups")
 
 
 class InstallerError(RuntimeError):
@@ -57,23 +59,60 @@ def install_payload(payload_dir: Path, destination: Path) -> Path:
     source_executable = payload / EXECUTABLE_NAME
     if not source_executable.is_file():
         raise InstallerError("В установщике отсутствуют файлы passwordSafe")
-    if target == payload or payload in target.parents:
-        raise InstallerError("Папка установки не может находиться внутри файлов установщика")
+    if target == payload or payload in target.parents or target in payload.parents:
+        raise InstallerError("Папки установки и файлов установщика не должны находиться одна внутри другой")
+    data_directories = [default_data_dir().resolve()]
+    if os.name == "nt" and (base := os.environ.get("APPDATA") or os.environ.get("LOCALAPPDATA")):
+        data_directories.extend((Path(base) / name).resolve() for name in (APP_NAME, LEGACY_APP_NAME))
+    if any(target == data or target in data.parents or data in target.parents for data in data_directories):
+        raise InstallerError("Выберите папку установки отдельно от каталога пользовательских данных")
     if target.exists() and not target.is_dir():
         raise InstallerError("По указанному пути уже находится файл")
     if target.is_dir() and any(target.iterdir()):
+        if any((target / name).exists() for name in USER_DATA_NAMES):
+            raise InstallerError("В папке установки есть пользовательские данные. Выберите другую папку для приложения.")
         is_existing_install = (target / EXECUTABLE_NAME).is_file() or (target / INSTALL_MARKER).is_file()
         if not is_existing_install:
             raise InstallerError("Выбранная папка не пуста и не является установкой passwordSafe")
 
+    staging = None
+    preserve_previous = False
+    published = False
     try:
-        target.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(payload, target, dirs_exist_ok=True)
-        (target / INSTALL_MARKER).write_text("passwordSafe\n", encoding="utf-8")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=f".{target.name}-install-", dir=target.parent))
+        prepared = staging / "new"
+        previous = staging / "previous"
+        shutil.copytree(payload, prepared)
+        if not (prepared / EXECUTABLE_NAME).is_file():
+            raise InstallerError("Установка не завершена: исполняемый файл не найден в подготовленной версии")
+        (prepared / INSTALL_MARKER).write_text("passwordSafe\n", encoding="utf-8")
+        if target.exists():
+            target.rename(previous)
+        try:
+            prepared.rename(target)
+        except OSError:
+            if previous.exists():
+                try:
+                    previous.rename(target)
+                except OSError as exc:
+                    preserve_previous = True
+                    raise InstallerError(
+                        f"Обновление не завершено, откат не удался. Предыдущая версия сохранена в:\n{previous}"
+                    ) from exc
+            raise
+        published = True
     except PermissionError as exc:
-        raise InstallerError("Нет доступа для записи. Выберите другую папку") from exc
+        raise InstallerError("Нет доступа для записи. Закройте passwordSafe или выберите другую папку") from exc
     except OSError as exc:
         raise InstallerError("Не удалось скопировать файлы. Закройте passwordSafe и попробуйте снова") from exc
+    finally:
+        if staging is not None and not preserve_previous:
+            try:
+                shutil.rmtree(staging)
+            except OSError as exc:
+                status = "Новая версия установлена" if published else "Установка не завершена"
+                raise InstallerError(f"{status}. Не удалось удалить временные файлы:\n{staging}") from exc
 
     installed_executable = target / EXECUTABLE_NAME
     if not installed_executable.is_file():

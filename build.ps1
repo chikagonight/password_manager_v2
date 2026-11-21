@@ -1,7 +1,8 @@
 param(
     [switch]$CleanOnly,
     [switch]$SkipInstaller,
-    [switch]$SkipDependencies
+    [switch]$SkipDependencies,
+    [switch]$DependenciesOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -49,16 +50,66 @@ if ($LASTEXITCODE -ne 0 -or $pythonVersion -ne "3.14") {
     throw "The project virtual environment must use Python 3.14. Current version: $pythonVersion"
 }
 
+$lockPath = Join-Path $projectRoot "requirements-build.lock"
+if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
+    throw "Build dependency lock is missing: $lockPath"
+}
+
 if (-not $SkipDependencies) {
-    Write-Host "Installing build dependencies..."
-    $editableTarget = "$projectRoot[build]"
-    & $pythonPath -m pip install --disable-pip-version-check --editable $editableTarget
+    Write-Host "Installing locked build and CI dependencies..."
+    & $pythonPath -m pip install --disable-pip-version-check --no-deps --requirement $lockPath
     if ($LASTEXITCODE -ne 0) {
         throw "Dependency installation failed with exit code $LASTEXITCODE"
     }
+    & $pythonPath -m pip install --disable-pip-version-check --no-deps --no-build-isolation --editable $projectRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "Project installation failed with exit code $LASTEXITCODE"
+    }
 }
 
-& $pythonPath -m PyInstaller `
+# Проверка обязательна и при -SkipDependencies: обход lock-файла не допускается.
+$verifyDependencies = @'
+import sys
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+
+from packaging.requirements import Requirement
+
+errors = []
+for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    line = line.split("#", 1)[0].strip()
+    if not line:
+        continue
+    requirement = Requirement(line)
+    if requirement.marker and not requirement.marker.evaluate():
+        continue
+    pins = list(requirement.specifier)
+    if len(pins) != 1 or pins[0].operator != "==" or "*" in pins[0].version:
+        errors.append(f"Unpinned build dependency: {line}")
+        continue
+    try:
+        actual = version(requirement.name)
+    except PackageNotFoundError:
+        actual = "not installed"
+    if actual != pins[0].version:
+        errors.append(f"{requirement.name}: expected {pins[0].version}, found {actual}")
+if errors:
+    raise SystemExit("Build dependencies differ from lock:\n" + "\n".join(errors))
+'@
+$verifyDependencies | & $pythonPath - $lockPath
+if ($LASTEXITCODE -ne 0) {
+    throw "Build dependency verification failed. Run build.ps1 without -SkipDependencies."
+}
+& $pythonPath -m pip check
+if ($LASTEXITCODE -ne 0) {
+    throw "Installed dependencies are inconsistent."
+}
+if ($DependenciesOnly) {
+    exit 0
+}
+
+$env:PYINSTALLER_CONFIG_DIR = Join-Path $buildPath ".pyinstaller"
+& $pythonPath -I -m PyInstaller `
     --noconfirm `
     --clean `
     --windowed `
@@ -86,7 +137,7 @@ if ($SkipInstaller) {
 }
 
 $payloadArgument = "$appDistPath;payload"
-& $pythonPath -m PyInstaller `
+& $pythonPath -I -m PyInstaller `
     --noconfirm `
     --clean `
     --onefile `
