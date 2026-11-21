@@ -13,7 +13,10 @@ from password_safe.application import PasswordSafe
 from password_safe.ports import CsvImportData, PasswordClipboard, ProgressCallback
 from password_safe.ports import ImportRecordsError as ImportRecordsError
 from password_safe.ports import ValidationError as ValidationError
+from password_safe.updates import UpdateChecker
+from password_safe.version import APP_VERSION
 from utils.browser_csv import BrowserCsvError, read_browser_csv
+from utils.github_releases import RELEASES_URL, GitHubReleases
 from utils.legacy_records import LegacyJsonRecords
 from utils.password_tools import PasswordGenerator
 from utils.settings_tools import SettingsTools
@@ -82,7 +85,11 @@ def main() -> None:
 
         return TkClipboard(window)
 
-    Ui(app, data_dir=app.data_dir, clipboard_factory=clipboard_factory).mainloop()
+    update_checker = UpdateChecker(APP_VERSION, GitHubReleases().latest_release)
+    Ui(
+        app, data_dir=app.data_dir, clipboard_factory=clipboard_factory,
+        check_updates=update_checker.check, releases_url=RELEASES_URL,
+    ).mainloop()
 
 
 if __name__ == "__main__":
