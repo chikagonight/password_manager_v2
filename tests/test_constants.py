@@ -32,5 +32,12 @@ class DataDirectoryCompatibilityTests(unittest.TestCase):
         self.assertEqual(self.base / APP_NAME, select_windows_data_dir(self.base))
 
 
+    def test_legacy_backup_dir_is_used_when_neither_working_vault_exists(self):
+        legacy = self.base / LEGACY_APP_NAME
+        legacy.mkdir()
+        (legacy / "vault.pm2.bak").touch()
+        self.assertEqual(legacy, select_windows_data_dir(self.base))
+
+
 if __name__ == "__main__":
     unittest.main()

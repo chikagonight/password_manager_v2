@@ -6,12 +6,13 @@ from tkinter import messagebox
 import customtkinter as ctk
 
 from models import PasswordRecord
-from password_manager_app import PasswordManagerApp, ValidationError
-from utils.vault_store import VaultError
+from password_safe.application import PasswordSafe
+from password_safe.ports import ValidationError, VaultError
+from utils.tk_clipboard import protect_password_entry
 
 
 class RecordWindow(ctk.CTkToplevel):
-    def __init__(self, parent, record: PasswordRecord, password_manager_app: PasswordManagerApp):
+    def __init__(self, parent, record: PasswordRecord, password_manager_app: PasswordSafe):
         super().__init__(parent)
         self.parent_ui = parent
         self.record = record
@@ -45,6 +46,7 @@ class RecordWindow(ctk.CTkToplevel):
         password_panel.grid(row=9, column=0, padx=7, pady=(0, 3), sticky="ew")
         password_panel.grid_columnconfigure(0, weight=1)
         self.password_service = ctk.CTkEntry(password_panel, show="*", height=30)
+        protect_password_entry(self.password_service, self.parent_ui.copy_to_clipboard)
         self.password_service.insert(0, self.record.password)
         self.password_service.configure(state="readonly")
         self.password_service.grid(row=0, column=0, padx=(0, 5), sticky="ew")

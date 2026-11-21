@@ -6,7 +6,9 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlsplit
+
+from password_safe.domain import ValidationError, normalize_web_url
 
 ProgressCallback = Callable[[int, int, str], None]
 
@@ -45,40 +47,53 @@ def read_browser_csv(path: Path, progress_callback: ProgressCallback | None = No
         progress_callback(0, 1, "Чтение CSV")
     try:
         raw = Path(path).read_bytes()
-    except OSError as exc:
-        raise BrowserCsvError(f"Не удалось открыть CSV: {exc}") from exc
+    except OSError:
+        raise BrowserCsvError("Не удалось открыть CSV. Проверьте доступ к файлу.") from None
     if not raw:
         raise BrowserCsvError("CSV-файл пуст")
 
     text = _decode_browser_export(raw)
     try:
+        return _parse_browser_export(text)
+    except csv.Error:
+        raise BrowserCsvError("Нарушена структура CSV: проверьте кавычки и разделители") from None
+
+
+def _parse_browser_export(text: str) -> BrowserCsvData:
+    try:
         dialect = csv.Sniffer().sniff(text[:16_384], delimiters=",;\t")
     except csv.Error:
         dialect = csv.excel
 
-    reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+    reader = csv.DictReader(
+        io.StringIO(text, newline=""), dialect=dialect, doublequote=True, skipinitialspace=False, strict=True
+    )
     if not reader.fieldnames:
         raise BrowserCsvError("В CSV отсутствует строка заголовков")
-    normalized_headers = {_normalize_header(header) for header in reader.fieldnames if header}
-    if not normalized_headers.intersection(PASSWORD_KEYS):
+    headers = [_normalize_header(header) for header in reader.fieldnames]
+    normalized_headers = set(headers)
+    if "" in normalized_headers or len(normalized_headers) != len(headers):
+        raise BrowserCsvError("Заголовки CSV пусты или повторяются")
+    password_headers = normalized_headers.intersection(PASSWORD_KEYS)
+    if not password_headers:
         raise BrowserCsvError(
             "Не найдена колонка password. Экспортируйте пароли из Chrome/Edge/Brave/Opera, Firefox или Safari."
         )
+    if len(password_headers) != 1:
+        raise BrowserCsvError("В CSV больше одной колонки пароля")
+    (password_header,) = password_headers
 
     source_format = _detect_source(normalized_headers)
+    reader.fieldnames = headers
     output: list[dict[str, str]] = []
     for raw_row in reader:
-        row = {
-            _normalize_header(str(key)): str(value or "").strip()
-            for key, value in raw_row.items()
-            if key is not None
-        }
+        if None in raw_row or any(value is None for value in raw_row.values()):
+            raise BrowserCsvError(f"Неверное количество полей CSV: строка {reader.line_num}")
+        # Пароли сохраняются буквально; нормализация применяется только к метаданным.
+        row = {key: value if key in PASSWORD_KEYS else value.strip() for key, value in raw_row.items()}
         url = _first_value(row, URL_KEYS)
         realm = _first_value(row, REALM_KEYS)
         login = _first_value(row, LOGIN_KEYS)
-        parsed_url = urlparse(url if "://" in url else f"https://{url}")
-        fallback_name = realm or parsed_url.hostname or login or "Без названия"
-        name = _first_value(row, NAME_KEYS) or fallback_name
         note = _first_value(row, NOTE_KEYS)
         otp = _first_value(row, OTP_KEYS)
         if otp:
@@ -86,16 +101,22 @@ def read_browser_csv(path: Path, progress_callback: ProgressCallback | None = No
 
         # Chromium may export Android application identifiers. Preserve them in
         # the encrypted note, but do not expose them to webbrowser.open().
-        if url and parsed_url.scheme and parsed_url.scheme not in {"http", "https"}:
+        scheme = re.match(r"^([a-z][a-z0-9+.-]*)://", url, re.IGNORECASE)
+        if scheme and scheme.group(1).casefold() not in {"http", "https"}:
             note = f"{note}\nИсходный адрес: {url}".strip()
             url = ""
+        try:
+            hostname = urlsplit(normalize_web_url(url)).hostname
+        except ValidationError as exc:
+            raise BrowserCsvError(f"Строка {reader.line_num}: {exc}") from None
+        name = _first_value(row, NAME_KEYS) or realm or hostname or login or "Без названия"
 
         output.append(
             {
                 "record_name": name,
                 "service_name": name,
                 "login": login,
-                "password": _first_value(row, PASSWORD_KEYS),
+                "password": row[password_header],
                 "url_link_service": url,
                 "note": note,
             }

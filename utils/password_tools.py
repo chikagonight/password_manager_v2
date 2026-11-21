@@ -3,14 +3,18 @@ from __future__ import annotations
 import secrets
 import string
 
-MIN_GENERATED_PASSWORD_LENGTH = 8
-MAX_GENERATED_PASSWORD_LENGTH = 128
+from password_safe.domain import MAX_GENERATED_PASSWORD_LENGTH as MAX_GENERATED_PASSWORD_LENGTH
+from password_safe.domain import MIN_GENERATED_PASSWORD_LENGTH as MIN_GENERATED_PASSWORD_LENGTH
+
 SPECIAL_CHARACTERS = "!@#$%&*+-_=.?"
 
 
 class PasswordGenerator:
     def generate(self, length_password: int | str) -> str | None:
-        length = int(length_password)
+        try:
+            length = int(length_password)
+        except (TypeError, ValueError):
+            return None
         if not MIN_GENERATED_PASSWORD_LENGTH <= length <= MAX_GENERATED_PASSWORD_LENGTH:
             return None
 

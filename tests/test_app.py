@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from password_manager_app import ImportRecordsError, PasswordManagerApp, ValidationError
 from utils.vault_store import VaultAuthenticationError, VaultError, VaultStore
@@ -103,6 +104,25 @@ class PasswordManagerAppTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(ValidationError):
                 self.app.save_record("Name", "Service", "login", "secret", "secret", url)
 
+    def test_browser_port_receives_only_valid_http_urls(self):
+        opened = []
+        app = PasswordManagerApp(
+            data_dir=self.directory / "data", legacy_records_path=self.legacy_path, browser=opened.append
+        )
+        for url in ("javascript:123", "https://[not-an-ip", "https://ok.test\\@bad.test", "https://user@ok.test"):
+            with self.subTest(url=url), self.assertRaises(ValidationError):
+                app.open_url(url)
+        self.assertEqual([], opened)
+        app.open_url("example.test:8443/path")
+        self.assertEqual(["https://example.test:8443/path"], opened)
+
+    def test_generator_uses_same_limits_for_validation_and_message(self):
+        for length in (8, 128):
+            self.assertEqual(length, len(self.app.password_generate(length)))
+        for length in (7, 129, "not a number"):
+            with self.subTest(length=length), self.assertRaisesRegex(ValidationError, "от 8 до 128"):
+                self.app.password_generate(length)
+
     def test_url_without_scheme_is_normalized_to_https(self):
         self.create_vault()
 
@@ -179,6 +199,38 @@ class PasswordManagerAppTests(unittest.TestCase):
         self.assertEqual("", record.login)
         self.assertEqual("", record.password)
 
+    def test_csv_password_is_preserved_after_reopening_vault(self):
+        self.create_vault()
+        path = self.directory / "literal.csv"
+        value = '  prefix,"line"\r\nend  '
+        self._write_csv(path, [{"name": "Test", "password": value}])
+        self.assertEqual(1, self.app.import_records_from_csv(path))
+        self.app.lock()
+        self.app.unlock(MASTER_PASSWORD)
+        self.assertTrue(self.app.get_records()[0].password == value)
+
+    def test_structurally_invalid_csv_keeps_main_and_backup_bytes(self):
+        self.create_vault()
+        first = self.save_record()
+        files = (self.app.store.path, self.app.store.backup_path)
+        initial = [path.read_bytes() for path in files]
+        path = self.directory / "bad-shape.csv"
+        path.write_text("url,username,password\nexample.test,user,value\nexample.test,user\n", encoding="utf-8")
+        with self.assertRaises(ImportRecordsError):
+            self.app.import_records_from_csv(path)
+        self.assertTrue(initial == [path.read_bytes() for path in files])
+        self.assertEqual([first.id], [record.id for record in self.app.get_records()])
+
+    def test_malformed_csv_url_is_an_import_error_without_row_content(self):
+        self.create_vault()
+        path = self.directory / "bad-url.csv"
+        row = {"url": "https://[private-marker", "password": "other-private-marker"}
+        self._write_csv(path, [row])
+        with self.assertRaises(ImportRecordsError) as error:
+            self.app.import_records_from_csv(path)
+        self.assertNotIn("private-marker", str(error.exception))
+        self.assertEqual([], self.app.get_records())
+
     def test_legacy_migration_creates_encrypted_backup_then_removes_plaintext(self):
         self.legacy_path.parent.mkdir(parents=True)
         legacy_password = "Legacy-Plaintext-Marker-831"
@@ -206,6 +258,34 @@ class PasswordManagerAppTests(unittest.TestCase):
         backup = self.app.data_dir / "backups" / "legacy-migration.pm2"
         self.assertTrue(backup.is_file())
         self.assertNotIn(legacy_password, backup.read_text(encoding="utf-8"))
+
+    def test_legacy_migration_rejects_mixed_array_without_creating_a_vault(self):
+        self.legacy_path.parent.mkdir(parents=True)
+        self.legacy_path.write_text('[{"ID": 0, "password": ""}, 42]', encoding="utf-8")
+        with self.assertRaises(ValidationError):
+            self.app.create_vault(MASTER_PASSWORD, MASTER_PASSWORD, migrate_legacy=True)
+        self.assertTrue(self.legacy_path.exists())
+        self.assertFalse(self.app.vault_exists)
+
+    def test_migration_with_selected_source_can_resume_without_duplicate_records(self):
+        source = self.directory / "выбранные записи.json"
+        source.write_text('[{"ID": 0, "password": "", "url_link_service": "example.test"}]', encoding="utf-8")
+        with (
+            patch.object(self.app.store, "create_backup", side_effect=OSError),
+            self.assertRaisesRegex(VaultError, "миграци"),
+        ):
+            self.app.create_vault(MASTER_PASSWORD, MASTER_PASSWORD, legacy_source=source)
+        self.assertTrue(source.exists())
+        self.assertTrue(self.app.vault_exists)
+        self.app.lock()
+        self.app.unlock(MASTER_PASSWORD)
+        self.app.finish_legacy_migration(source, MASTER_PASSWORD)
+        self.assertFalse(source.exists())
+        (record,) = self.app.get_records()
+        self.assertEqual("0", record.id)
+        self.assertEqual("https://example.test", record.url_link_service)
+        copy = VaultStore(self.app.data_dir / "backups" / "legacy-migration.pm2").unlock(MASTER_PASSWORD)
+        self.assertTrue(copy == [record])
 
     def test_export_restore_and_unlock(self):
         self.create_vault()

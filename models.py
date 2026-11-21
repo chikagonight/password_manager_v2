@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -16,9 +16,9 @@ class PasswordRecord:
     record_name: str
     service_name: str
     login: str
-    password: str
+    password: str = field(repr=False)
     url_link_service: str = ""
-    note: str = ""
+    note: str = field(default="", repr=False)
     created_at: str = ""
     updated_at: str = ""
 
@@ -48,19 +48,13 @@ class PasswordRecord:
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> PasswordRecord:
-        record_id = str(value.get("id") or value.get("ID") or uuid4())
-        created_at = str(value.get("created_at") or utc_now())
-        return cls(
-            id=record_id,
-            record_name=str(value.get("record_name", "")).strip(),
-            service_name=str(value.get("service_name", "")).strip(),
-            login=str(value.get("login", "")).strip(),
-            password=str(value.get("password", "")),
-            url_link_service=str(value.get("url_link_service", "")).strip(),
-            note=str(value.get("note", "")).strip(),
-            created_at=created_at,
-            updated_at=str(value.get("updated_at") or created_at),
-        )
+        keys = ("id", "record_name", "service_name", "login", "password", "url_link_service", "note", "created_at", "updated_at")
+        fields = {key: value[key] for key in keys}
+        if not all(isinstance(item, str) for item in fields.values()) or not fields["id"]:
+            raise ValueError("Некорректные поля записи")
+        for item in fields.values():
+            item.encode("utf-8")
+        return cls(**fields)
 
     def to_dict(self) -> dict[str, str]:
         return asdict(self)

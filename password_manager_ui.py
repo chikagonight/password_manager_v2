@@ -2,19 +2,25 @@ from __future__ import annotations
 
 import queue
 import threading
-import webbrowser
+from collections.abc import Callable
 from contextlib import suppress
+from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog
 
 import customtkinter as ctk
 
-from constants import APP_TITLE, MIN_MASTER_PASSWORD_LENGTH
+from constants import APP_TITLE
 from models import PasswordRecord
-from password_manager_app import ImportRecordsError, PasswordManagerApp, ValidationError
+from password_safe.application import PasswordSafe
+from password_safe.domain import (
+    MAX_GENERATED_PASSWORD_LENGTH,
+    MIN_GENERATED_PASSWORD_LENGTH,
+    MIN_MASTER_PASSWORD_LENGTH,
+)
+from password_safe.ports import ImportRecordsError, MigrationIncomplete, PasswordClipboard, ValidationError, VaultError
 from record_window import RecordWindow
 from ui_compat import configure_stable_windows_dpi
-from utils.password_tools import MIN_GENERATED_PASSWORD_LENGTH
-from utils.vault_store import VaultError
+from utils.tk_clipboard import protect_password_entry
 
 configure_stable_windows_dpi()
 
@@ -30,8 +36,13 @@ OUTLINE_BUTTON_STYLE = {
 
 
 class Ui(ctk.CTk):
-    def __init__(self, password_manager_app: PasswordManagerApp):
+    def __init__(
+        self, password_manager_app: PasswordSafe, *, data_dir: Path | None = None,
+        clipboard_factory: Callable[[Ui], PasswordClipboard] | None = None,
+    ):
         self.password_manager_app = password_manager_app
+        self._data_dir = data_dir
+        self._clipboard_factory = clipboard_factory
         ctk.set_default_color_theme("dark-blue")
         ctk.set_appearance_mode(str(self.password_manager_app.settings["theme"]))
         super().__init__()
@@ -46,7 +57,7 @@ class Ui(ctk.CTk):
         self._clipboard_job: str | None = None
         self._status_job: str | None = None
         self._search_job: str | None = None
-        self._clipboard_value: str | None = None
+        self._clipboard: PasswordClipboard | None = None
         self._record_results: list[PasswordRecord] = []
         self._rendered_record_count = 0
         self._load_more_button: ctk.CTkButton | None = None
@@ -55,6 +66,7 @@ class Ui(ctk.CTk):
         self._import_queue: queue.Queue[tuple] = queue.Queue()
         self.import_dialog: ctk.CTkToplevel | None = None
         self.record_window: RecordWindow | None = None
+        self._legacy_source: Path | None = None
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.show_lock_screen()
 
@@ -75,7 +87,7 @@ class Ui(ctk.CTk):
 
         container = ctk.CTkFrame(self, width=460, height=370)
         container.grid(row=0, column=0, padx=20, pady=20)
-        container.grid_propagate(False)
+
         container.grid_columnconfigure(0, weight=1)
 
         is_existing = self.password_manager_app.vault_exists
@@ -83,8 +95,8 @@ class Ui(ctk.CTk):
         description = (
             "Введите мастер-пароль."
             if is_existing
-            else f"Придумайте мастер-пароль не короче {MIN_MASTER_PASSWORD_LENGTH} символов.\n"
-            "Восстановить забытый мастер-пароль невозможно."
+            else f"Минимум {MIN_MASTER_PASSWORD_LENGTH} символов. Лучше выбрать длинную фразу из нескольких "
+            "случайных слов. Забытый мастер-пароль восстановить нельзя."
         )
         ctk.CTkLabel(container, text=heading, font=ctk.CTkFont(size=24, weight="bold")).grid(
             row=0, column=0, padx=24, pady=(28, 8), sticky="ew"
@@ -106,14 +118,12 @@ class Ui(ctk.CTk):
             self.repeat_master_password_entry.bind("<Return>", lambda _event: self._submit_unlock())
             row += 1
 
-            self.migrate_legacy_var = ctk.BooleanVar(value=self.password_manager_app.has_legacy_records)
-            if self.password_manager_app.has_legacy_records:
-                ctk.CTkCheckBox(
-                    container,
-                    text="Зашифровать записи из старого records.json\nи удалить его после проверенной миграции",
-                    variable=self.migrate_legacy_var,
-                ).grid(row=row, column=0, padx=35, pady=6, sticky="w")
-                row += 1
+            self.legacy_button = ctk.CTkButton(
+                container, text="Выбрать файл старых записей…", command=self._choose_legacy_source,
+                border_width=1, **OUTLINE_BUTTON_STYLE,
+            )
+            self.legacy_button.grid(row=row, column=0, padx=35, pady=4, sticky="ew")
+            row += 1
 
         self.unlock_error_label = ctk.CTkLabel(container, text="", text_color="#e57373", wraplength=390)
         self.unlock_error_label.grid(row=row, column=0, padx=30, pady=3, sticky="ew")
@@ -127,14 +137,20 @@ class Ui(ctk.CTk):
         ).grid(row=row, column=0, padx=35, pady=(5, 4), sticky="ew")
         row += 1
 
-        if is_existing and self.password_manager_app.store.backup_path.is_file():
+        if self.password_manager_app.has_automatic_backup:
             ctk.CTkButton(
                 container,
-                text="Восстановить последнюю резервную копию",
+                text="Восстановить автоматическую копию",
                 command=self._restore_default_backup,
                 border_width=1,
                 **OUTLINE_BUTTON_STYLE,
             ).grid(row=row, column=0, padx=35, pady=4, sticky="ew")
+            row += 1
+
+        ctk.CTkButton(
+            container, text="Выбрать резервную копию…", command=self.restore_backup,
+            border_width=1, **OUTLINE_BUTTON_STYLE,
+        ).grid(row=row, column=0, padx=35, pady=(4, 18), sticky="ew")
 
         self._focus_job = self.after(150, self._focus_master_password)
 
@@ -142,6 +158,29 @@ class Ui(ctk.CTk):
         self._focus_job = None
         with suppress(Exception):
             self.master_password_entry.focus_set()
+
+    def _select_legacy_path(self) -> Path | None:
+        try:
+            suggested = self.password_manager_app.suggested_legacy_source
+        except OSError:
+            suggested = None
+        path = filedialog.askopenfilename(
+            parent=self, title="Выберите старый records.json",
+            initialdir=str(suggested.parent) if suggested else str(Path.cwd()),
+            initialfile=suggested.name if suggested else "records.json",
+            filetypes=[("JSON", "*.json"), ("Все файлы", "*.*")],
+        )
+        return Path(path) if path else None
+
+    def _choose_legacy_source(self) -> None:
+        self._legacy_source = self._select_legacy_path()
+        self.legacy_button.configure(text="Файл старых записей выбран" if self._legacy_source else "Выбрать файл старых записей…")
+
+    def _confirm_legacy_removal(self) -> bool:
+        return messagebox.askyesno(
+            "Миграция", "Удалить выбранный открытый JSON-файл после проверки зашифрованной копии?",
+            parent=self,
+        )
 
     def _submit_unlock(self) -> None:
         if self._focus_job:
@@ -153,12 +192,9 @@ class Ui(ctk.CTk):
                 self.password_manager_app.unlock(password)
             else:
                 repeat = self.repeat_master_password_entry.get()
-                migrate = bool(
-                    self.password_manager_app.has_legacy_records
-                    and hasattr(self, "migrate_legacy_var")
-                    and self.migrate_legacy_var.get()
-                )
-                if self.password_manager_app.has_legacy_records and not migrate:
+                if self._legacy_source is not None and not self._confirm_legacy_removal():
+                    return
+                if self._legacy_source is None and self.password_manager_app.has_legacy_records:
                     proceed = messagebox.askyesno(
                         "Старые записи",
                         "Старый records.json не будет импортирован. Создать пустое хранилище?",
@@ -166,12 +202,17 @@ class Ui(ctk.CTk):
                     )
                     if not proceed:
                         return
-                self.password_manager_app.create_vault(password, repeat, migrate_legacy=migrate)
+                self.password_manager_app.create_vault(password, repeat, legacy_source=self._legacy_source)
             self.create_main_ui()
+        except MigrationIncomplete as exc:
+            self.create_main_ui()
+            messagebox.showwarning("Миграция не завершена", str(exc), parent=self)
         except (ValidationError, VaultError) as exc:
             self.unlock_error_label.configure(text=str(exc))
             self.master_password_entry.delete(0, "end")
             self.master_password_entry.focus_set()
+        except OSError:
+            self.unlock_error_label.configure(text="Ошибка доступа к файлам хранилища")
 
     def create_main_ui(self) -> None:
         self._clear_root()
@@ -239,11 +280,13 @@ class Ui(ctk.CTk):
             row=2, column=0, padx=8, pady=(3, 1), sticky="w"
         )
         self.password_input = ctk.CTkEntry(password_frame, placeholder_text="Пароль", show="*")
+        protect_password_entry(self.password_input, self.copy_to_clipboard)
         self.password_input.grid(row=3, column=0, padx=8, pady=(0, 2), sticky="ew")
         ctk.CTkLabel(password_frame, text="Повтор пароля", height=22).grid(
             row=4, column=0, padx=8, pady=(3, 1), sticky="w"
         )
         self.repeat_password_input = ctk.CTkEntry(password_frame, placeholder_text="Повторите пароль", show="*")
+        protect_password_entry(self.repeat_password_input, self.copy_to_clipboard)
         self.repeat_password_input.grid(row=5, column=0, padx=8, pady=(0, 2), sticky="ew")
         generator_frame = ctk.CTkFrame(password_frame, fg_color="transparent")
         generator_frame.grid(row=6, column=0, padx=8, pady=(2, 5), sticky="ew")
@@ -254,7 +297,7 @@ class Ui(ctk.CTk):
         self.show_password_button.grid(row=0, column=0, padx=(0, 3))
         self.length_password = ctk.CTkComboBox(
             generator_frame,
-            values=[str(i) for i in range(MIN_GENERATED_PASSWORD_LENGTH, 65)],
+            values=[str(i) for i in range(MIN_GENERATED_PASSWORD_LENGTH, MAX_GENERATED_PASSWORD_LENGTH + 1)],
             width=70,
             height=30,
         )
@@ -301,7 +344,7 @@ class Ui(ctk.CTk):
 
         ctk.CTkLabel(panel, text="Автоблокировка").grid(row=1, column=0, padx=10, pady=6, sticky="w")
         self.auto_lock_combo = ctk.CTkComboBox(
-            panel, values=["1", "5", "10", "15", "30"], command=self.change_auto_lock, width=120
+            panel, values=["1", "5", "10", "15", "30"], command=self.change_auto_lock, width=120, state="readonly"
         )
         self.auto_lock_combo.set(str(self.password_manager_app.settings["auto_lock_minutes"]))
         self.auto_lock_combo.grid(row=1, column=1, padx=10, pady=6, sticky="w")
@@ -327,12 +370,13 @@ class Ui(ctk.CTk):
         ctk.CTkButton(panel, text="Заблокировать сейчас", command=self.lock_now).grid(
             row=7, column=0, columnspan=2, padx=10, pady=3, sticky="ew"
         )
-        ctk.CTkLabel(
-            panel,
-            text=f"Данные: {self.password_manager_app.data_dir}",
-            wraplength=480,
-            text_color="gray60",
-        ).grid(row=8, column=0, columnspan=2, padx=10, pady=(8, 6), sticky="w")
+        ctk.CTkButton(panel, text="Завершить миграцию", command=self.finish_legacy_migration).grid(
+            row=8, column=0, columnspan=2, padx=10, pady=3, sticky="ew"
+        )
+        if self._data_dir is not None:
+            ctk.CTkLabel(
+                panel, text=f"Данные: {self._data_dir}", wraplength=480, text_color="gray60",
+            ).grid(row=9, column=0, columnspan=2, padx=10, pady=(8, 6), sticky="w")
 
     def refresh_records(self) -> None:
         if self.password_manager_app.is_locked or not hasattr(self, "records_field"):
@@ -504,11 +548,16 @@ class Ui(ctk.CTk):
         self.search_records_input.delete(0, "end")
         self.refresh_records()
 
-    def copy_to_clipboard(self, value: str, label: str) -> None:
-        self.clipboard_clear()
-        self.clipboard_append(value)
-        self.update_idletasks()
-        self._clipboard_value = value
+    def copy_to_clipboard(self, value: str, label: str) -> bool:
+        try:
+            if self._clipboard is None:
+                if self._clipboard_factory is None:
+                    raise OSError
+                self._clipboard = self._clipboard_factory(self)
+            self._clipboard.copy_password(value)
+        except (OSError, ValueError):
+            messagebox.showerror("Буфер обмена", "Не удалось безопасно скопировать значение", parent=self)
+            return False
         if self._clipboard_job:
             self.after_cancel(self._clipboard_job)
         seconds = int(self.password_manager_app.settings["clipboard_clear_seconds"])
@@ -517,6 +566,7 @@ class Ui(ctk.CTk):
         if self._status_job:
             self.after_cancel(self._status_job)
         self._status_job = self.after(4_000, self._clear_status)
+        return True
 
     def _clear_status(self) -> None:
         self._status_job = None
@@ -524,18 +574,18 @@ class Ui(ctk.CTk):
             self.status_label.configure(text="")
 
     def _clear_clipboard_if_unchanged(self) -> None:
-        try:
-            if self.clipboard_get() == self._clipboard_value:
-                self.clipboard_clear()
-                self.update_idletasks()
-        except Exception:
-            pass
-        self._clipboard_value = None
-        self._clipboard_job = None
+        if self._clipboard_job:
+            self.after_cancel(self._clipboard_job)
+            self._clipboard_job = None
+        if self._clipboard is not None:
+            with suppress(OSError):
+                self._clipboard.clear_password()
 
     def open_url(self, url: str) -> None:
-        if url:
-            webbrowser.open(url, new=2)
+        try:
+            self.password_manager_app.open_url(url)
+        except ValidationError as exc:
+            messagebox.showerror("Не удалось открыть сайт", str(exc), parent=self)
 
     def import_csv(self) -> None:
         path = filedialog.askopenfilename(
@@ -599,8 +649,8 @@ class Ui(ctk.CTk):
                 count = self.password_manager_app.import_records_from_csv(path, report_progress)
             except (ImportRecordsError, VaultError, OSError, ValueError) as exc:
                 self._import_queue.put(("error", str(exc)))
-            except Exception as exc:
-                self._import_queue.put(("error", f"Непредвиденная ошибка импорта: {exc}"))
+            except Exception:
+                self._import_queue.put(("error", "Непредвиденная ошибка импорта"))
             else:
                 self._import_queue.put(("done", count))
 
@@ -670,9 +720,16 @@ class Ui(ctk.CTk):
         )
         if not path:
             return
-        if not messagebox.askyesno(
+        self._restore_selected_backup(Path(path))
+
+    def _restore_default_backup(self) -> None:
+        self._restore_selected_backup(None)
+
+    def _restore_selected_backup(self, path: Path | None) -> None:
+        replace_existing = self.password_manager_app.vault_exists
+        if replace_existing and not messagebox.askyesno(
             "Восстановление",
-            "Текущее хранилище будет заменено выбранной копией. Продолжить?",
+            "Текущее хранилище будет заменено резервной копией. Продолжить?",
             parent=self,
         ):
             return
@@ -682,29 +739,32 @@ class Ui(ctk.CTk):
             )
             if backup_password is None:
                 return
-            self.password_manager_app.restore_encrypted_backup(path, backup_password)
-        except (VaultError, OSError) as exc:
+            self.password_manager_app.restore_encrypted_backup(path, backup_password, replace_existing=replace_existing)
+        except (ValidationError, VaultError) as exc:
             messagebox.showerror("Восстановление", str(exc), parent=self)
             return
+        except OSError:
+            messagebox.showerror("Восстановление", "Ошибка доступа к файлам хранилища", parent=self)
+            return
+        self.lock_now()
         messagebox.showinfo("Восстановление", "Копия восстановлена. Разблокируйте хранилище.", parent=self)
-        self.show_lock_screen()
 
-    def _restore_default_backup(self) -> None:
-        if not messagebox.askyesno(
-            "Восстановление",
-            "Основной файл будет заменён последней автоматической копией. Продолжить?",
-            parent=self,
-        ):
+    def finish_legacy_migration(self) -> None:
+        source = self._select_legacy_path()
+        if source is None or not self._confirm_legacy_removal():
+            return
+        master = simpledialog.askstring("Миграция", "Мастер-пароль хранилища", show="*", parent=self)
+        if master is None:
             return
         try:
-            password = self.master_password_entry.get()
-            self.password_manager_app.restore_encrypted_backup(
-                self.password_manager_app.store.backup_path, password
-            )
-        except (VaultError, OSError) as exc:
-            self.unlock_error_label.configure(text=str(exc))
+            self.password_manager_app.finish_legacy_migration(source, master)
+        except (ValidationError, VaultError) as exc:
+            messagebox.showerror("Миграция", str(exc), parent=self)
             return
-        self.unlock_error_label.configure(text="Резервная копия восстановлена. Введите мастер-пароль.")
+        except OSError:
+            messagebox.showerror("Миграция", "Ошибка записи копии или удаления. Исходный файл не удалён.", parent=self)
+            return
+        messagebox.showinfo("Миграция", "Зашифрованная копия проверена, исходный файл удалён.", parent=self)
 
     def change_master_password(self) -> None:
         current = simpledialog.askstring(
@@ -714,7 +774,7 @@ class Ui(ctk.CTk):
             return
         new = simpledialog.askstring(
             "Смена мастер-пароля",
-            f"Новый мастер-пароль (минимум {MIN_MASTER_PASSWORD_LENGTH} символов)",
+            f"Новый мастер-пароль (минимум {MIN_MASTER_PASSWORD_LENGTH} символов). Лучше выбрать длинную фразу.",
             show="*",
             parent=self,
         )
@@ -726,19 +786,42 @@ class Ui(ctk.CTk):
         if repeat is None:
             return
         try:
-            self.password_manager_app.change_master_password(current, new, repeat)
+            result = self.password_manager_app.change_master_password(current, new, repeat)
         except (ValidationError, VaultError) as exc:
             messagebox.showerror("Смена мастер-пароля", str(exc), parent=self)
             return
-        messagebox.showinfo("Смена мастер-пароля", "Мастер-пароль изменён", parent=self)
+        except OSError:
+            messagebox.showerror("Смена мастер-пароля", "Не удалось записать хранилище. Пароль не изменён.", parent=self)
+            return
+        if result.backup_updated:
+            messagebox.showinfo(
+                "Смена мастер-пароля", "Пароль и автоматическая копия обновлены. Экспортированные копии не менялись.",
+                parent=self,
+            )
+        else:
+            messagebox.showwarning(
+                "Смена мастер-пароля",
+                "Пароль изменён, но автоматическую копию не удалось обновить. Если она есть, она не изменилась. "
+                "Сохраните новую зашифрованную копию. Экспортированные ранее копии не менялись.",
+                parent=self,
+            )
 
     def change_theme(self) -> None:
         theme = self.change_theme_switch.get()
+        try:
+            self.password_manager_app.save_setting("theme", theme)
+        except (OSError, ValidationError):
+            messagebox.showerror("Настройки", "Не удалось сохранить оформление", parent=self)
+            return
         ctk.set_appearance_mode(theme)
-        self.password_manager_app.save_setting("theme", theme)
 
     def change_auto_lock(self, value: str) -> None:
-        self.password_manager_app.save_setting("auto_lock_minutes", int(value))
+        try:
+            self.password_manager_app.save_setting("auto_lock_minutes", int(value))
+        except (OSError, ValueError):
+            self.auto_lock_combo.set(str(self.password_manager_app.settings["auto_lock_minutes"]))
+            messagebox.showerror("Настройки", "Не удалось сохранить время автоблокировки", parent=self)
+            return
         self._register_activity()
 
     def lock_now(self) -> None:
@@ -784,4 +867,8 @@ class Ui(ctk.CTk):
             self._status_job = None
         self._clear_clipboard_if_unchanged()
         self.password_manager_app.lock()
+        # CustomTkinter schedules callbacks on both the root and its child widgets.
+        # Cancel their Tcl timers; each widget's destroy still owns command cleanup.
+        for job in self.tk.splitlist(self.tk.call("after", "info")):
+            self.tk.call("after", "cancel", job)
         self.destroy()
